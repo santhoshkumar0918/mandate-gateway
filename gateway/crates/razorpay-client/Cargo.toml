@@ -1,0 +1,17 @@
+[package]
+name = "razorpay-client"
+version = "0.1.0"
+edition = "2024"
+description = "Razorpay test-mode API client for Orders, Payments, and Refunds"
+
+[dependencies]
+reqwest = { version = "0.12", features = ["json"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "2"
+base64 = "0.22"
+tokio = { version = "1", features = ["time"] }
+tracing = "0.1"
+
+[dev-dependencies]
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
