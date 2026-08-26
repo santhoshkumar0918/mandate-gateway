@@ -4,21 +4,6 @@ use crate::decision::{BlockReason, Decision};
 use crate::nonce_checker::NonceChecker;
 use crate::rules;
 
-/// Deterministic policy evaluator — no LLM, no ML, plain code.
-///
-/// Runs a purchase request through all policy rules and produces a single
-/// [`Decision`]. Every decision is logged via `tracing` for the audit trail.
-///
-/// # Order of evaluation
-///
-/// 1. Nonce replay check (has this nonce been used before?)
-/// 2. Signature verification (mandate integrity)
-/// 3. Expiry / revocation check
-/// 4. Exhaustion check
-/// 5. Budget check (amount vs remaining)
-/// 6. Scope check (category in whitelist)
-///
-/// Fail-fast: the first violation produces the decision. No partial passes.
 pub struct PolicyEvaluator<'a> {
     signer: &'a MandateSigner,
     nonce_checker: &'a dyn NonceChecker,
@@ -29,10 +14,6 @@ impl<'a> PolicyEvaluator<'a> {
         Self { signer, nonce_checker }
     }
 
-    /// Evaluates a purchase request against the given mandate.
-    ///
-    /// Returns a [`Decision`] — Allow, Block, or Escalate. The caller must
-    /// respect the decision before making any payment call.
     pub fn evaluate(&self, mandate: &Mandate, amount: i64, category: &str) -> Decision {
         // 1. Nonce replay check — has this nonce been used before?
         match self.nonce_checker.is_nonce_fresh(&mandate.nonce) {
@@ -154,7 +135,6 @@ mod tests {
     use chrono::Utc;
     use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
 
-    /// In-memory nonce checker for tests — tracks which nonces have been used.
     #[derive(Debug)]
     struct FakeNonceChecker {
         used_nonces: std::collections::HashSet<String>,

@@ -2,10 +2,6 @@ use mandate_engine::Mandate;
 
 use crate::decision::BlockReason;
 
-/// A single policy rule violation.
-///
-/// Each variant maps to a specific constraint check on the mandate.
-/// The evaluator collects these and converts them into [`Decision`](crate::Decision)s.
 #[derive(Debug, Clone)]
 pub enum RuleViolation {
     OverBudget { requested: i64, remaining: i64 },
@@ -17,7 +13,6 @@ pub enum RuleViolation {
 }
 
 impl RuleViolation {
-    /// Converts a violation into a block reason and human-readable detail.
     pub fn into_block(self) -> (BlockReason, String) {
         match self {
             Self::OverBudget { requested, remaining } => (
@@ -52,10 +47,6 @@ impl RuleViolation {
     }
 }
 
-/// Checks a purchase request against a mandate's constraints.
-///
-/// Returns `Ok(())` if all checks pass, or the first violation encountered.
-/// The evaluator calls these in order — fail-fast, no partial passes.
 pub fn check_budget(mandate: &Mandate, amount: i64) -> Result<(), RuleViolation> {
     let remaining = mandate.max_amount - mandate.spent_amount;
     if amount > remaining {
@@ -99,10 +90,6 @@ pub fn check_exhaustion(mandate: &Mandate) -> Result<(), RuleViolation> {
     Ok(())
 }
 
-/// Checks whether a mandate's nonce has been used before (replay detection).
-///
-/// This is called before any payment action. If the nonce exists in the
-/// database, someone is replaying an old mandate — hard block.
 pub fn check_nonce_replay(nonce_used: bool) -> Result<(), RuleViolation> {
     if nonce_used {
         return Err(RuleViolation::NonceReplay);
