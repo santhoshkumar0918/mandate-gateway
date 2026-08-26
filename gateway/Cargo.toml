@@ -1,5 +1,5 @@
 [workspace]
 resolver = "2"
 members = [
-    "crates/mandate-engine",
+    "crates/mandate-engine", "crates/policy-engine", "crates/razorpay-client", "services/catalog-service", "services/reconciliation",
 ]
