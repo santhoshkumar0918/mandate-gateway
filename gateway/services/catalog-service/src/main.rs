@@ -1,11 +1,264 @@
-use axum::{routing::get, Json, Router};
-use manifest::{Availability, MerchantManifest, Product};
-use std::net::SocketAddr;
+use axum::{
+    extract::{Path, State},
+    http::StatusCode,
+    routing::{get, post},
+    Json, Router,
+};
+use chrono::Utc;
+use db::PgPool;
+use mandate_engine::{Frequency, MandateSigner, NewMandate};
+use policy_engine::PolicyEvaluator;
+use razorpay_client::orders::OrdersApi;
+use serde::{Deserialize, Serialize};
+use sqlx::postgres::PgPoolOptions;
+use std::{net::SocketAddr, sync::Arc};
+use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
+use uuid::Uuid;
 
 mod manifest;
+use manifest::{Availability, MerchantManifest, Product};
 
-/// Sample merchant manifest for demo.
+// ─── App State ────────────────────────────────────────────────────────────
+
+#[derive(Clone)]
+struct AppState {
+    db: PgPool,
+    signer: Arc<MandateSigner>,
+    razorpay_orders: Arc<OrdersApi>,
+}
+
+// ─── Request / Response Types ─────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct IssueMandateBody {
+    user_id: String,
+    merchant_id: String,
+    buyer_agent_id: String,
+    max_amount: i64,
+    currency: String,
+    scope: Vec<String>,
+    frequency: String,
+    expires_in_hours: Option<i64>,
+}
+
+#[derive(Serialize)]
+struct IssueMandateResponse {
+    mandate_id: Uuid,
+    signature: String,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Deserialize)]
+#[allow(dead_code)]
+struct PurchaseRequest {
+    mandate_id: Uuid,
+    product_id: String,
+    quantity: i64,
+    shipping_address: String,
+}
+
+#[derive(Serialize)]
+struct PurchaseResponse {
+    order_id: String,
+    payment_id: Option<String>,
+    status: String,
+    amount: i64,
+}
+
+#[derive(Serialize)]
+struct AuditEntryResponse {
+    event_type: String,
+    entity_id: String,
+    decision: String,
+    reason: Option<String>,
+    detail: Option<serde_json::Value>,
+    actor: String,
+    created_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct AuditTrailResponse {
+    mandate_id: Uuid,
+    entries: Vec<AuditEntryResponse>,
+}
+
+#[derive(Serialize)]
+struct ErrorResponse {
+    error: String,
+}
+
+// ─── Handlers ─────────────────────────────────────────────────────────────
+
+async fn get_manifest() -> Json<MerchantManifest> {
+    Json(sample_manifest())
+}
+
+async fn get_catalog() -> Json<Vec<Product>> {
+    Json(sample_catalog())
+}
+
+async fn issue_mandate(
+    State(state): State<AppState>,
+    Json(body): Json<IssueMandateBody>,
+) -> Result<(StatusCode, Json<IssueMandateResponse>), (StatusCode, Json<ErrorResponse>)> {
+    let frequency = match body.frequency.as_str() {
+        "recurring" => Frequency::Recurring,
+        _ => Frequency::OneTime,
+    };
+
+    let expires_in_hours = body.expires_in_hours.unwrap_or(1);
+
+    let params = NewMandate {
+        user_id: body.user_id,
+        merchant_id: body.merchant_id,
+        buyer_agent_id: body.buyer_agent_id,
+        max_amount: body.max_amount,
+        currency: body.currency,
+        scope: body.scope,
+        frequency,
+        expires_at: Utc::now() + chrono::Duration::hours(expires_in_hours),
+    };
+
+    let mut mandate = mandate_engine::Mandate::new(params);
+
+    state.signer.sign(&mut mandate)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // Persist
+    db::mandate_repo::insert(&state.db, &mandate).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // Audit
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "mandate_issued",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &mandate.mandate_id.to_string(),
+        decision: "allowed",
+        reason: None,
+        detail: Some(serde_json::json!({
+            "max_amount": mandate.max_amount,
+            "scope": mandate.scope,
+        })),
+        actor: &mandate.buyer_agent_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(IssueMandateResponse {
+            mandate_id: mandate.mandate_id,
+            signature: hex::encode(&mandate.signature),
+            expires_at: mandate.expires_at,
+        }),
+    ))
+}
+
+async fn execute_purchase(
+    State(state): State<AppState>,
+    Json(body): Json<PurchaseRequest>,
+) -> Result<(StatusCode, Json<PurchaseResponse>), (StatusCode, Json<ErrorResponse>)> {
+    // 1. Fetch mandate
+    let mandate = db::mandate_repo::find_by_id(&state.db, body.mandate_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
+
+    // 2. Policy evaluation (includes signature verification)
+    let evaluator = PolicyEvaluator::new(&state.signer);
+    let order_amount = body.quantity * 129_900; // simplified
+    let category = mandate.scope.first().map(|s| s.as_str()).unwrap_or("unknown");
+    let decision = evaluator.evaluate(&mandate, order_amount, category);
+
+    // 3. Audit the decision
+    let (decision_str, reason_str) = match &decision {
+        policy_engine::Decision::Allow { .. } => ("allowed", None),
+        policy_engine::Decision::Block { reason, detail } => ("blocked", Some(format!("{:?}: {}", reason, detail))),
+        policy_engine::Decision::Escalate { reason, rule } => ("escalated", Some(format!("{}: {}", reason, rule))),
+    };
+
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "purchase_attempt",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &body.product_id,
+        decision: decision_str,
+        reason: reason_str.as_deref(),
+        detail: Some(serde_json::json!({ "amount": order_amount })),
+        actor: &mandate.buyer_agent_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 4. Handle non-allow decisions
+    match &decision {
+        policy_engine::Decision::Allow { .. } => {}
+        _ => {
+            return Err((StatusCode::FORBIDDEN, Json(ErrorResponse {
+                error: reason_str.unwrap_or_default(),
+            })));
+        }
+    }
+
+    // 5. Increment spent amount (double-spend prevention)
+    db::mandate_repo::increment_spent(&state.db, mandate.mandate_id, order_amount).await
+        .map_err(|e| (StatusCode::CONFLICT, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 6. Record intent
+    let intent_id = Uuid::new_v4();
+    db::intent_repo::insert(&state.db, intent_id, mandate.mandate_id,
+        &body.product_id, category, order_amount, &mandate.currency).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 7. Create order via Razorpay
+    let order = state.razorpay_orders.create_order(
+        order_amount, &mandate.currency, Some(&mandate.mandate_id.to_string()),
+    ).await.map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
+
+    db::order_repo::insert(&state.db, &order.id, mandate.mandate_id,
+        order_amount, &mandate.currency, &order.status, Some(&mandate.mandate_id.to_string())).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 8. Audit order creation
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "order_created",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &order.id,
+        decision: "allowed",
+        reason: None,
+        detail: Some(serde_json::json!({ "amount": order_amount })),
+        actor: &mandate.buyer_agent_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok((
+        StatusCode::CREATED,
+        Json(PurchaseResponse {
+            order_id: order.id,
+            payment_id: None,
+            status: order.status,
+            amount: order_amount,
+        }),
+    ))
+}
+
+async fn get_audit_trail(
+    State(state): State<AppState>,
+    Path(mandate_id): Path<Uuid>,
+) -> Result<Json<AuditTrailResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let entries = db::audit_repo::find_by_mandate(&state.db, mandate_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok(Json(AuditTrailResponse {
+        mandate_id,
+        entries: entries.into_iter().map(|e| AuditEntryResponse {
+            event_type: e.event_type,
+            entity_id: e.entity_id,
+            decision: e.decision,
+            reason: e.reason,
+            detail: e.detail,
+            actor: e.actor,
+            created_at: e.created_at,
+        }).collect(),
+    }))
+}
+
+// ─── Sample Data (for demo) ──────────────────────────────────────────────
+
 fn sample_manifest() -> MerchantManifest {
     MerchantManifest {
         merchant_id: "merchant-001".into(),
@@ -17,7 +270,6 @@ fn sample_manifest() -> MerchantManifest {
     }
 }
 
-/// Sample catalog for demo.
 fn sample_catalog() -> Vec<Product> {
     vec![
         Product {
@@ -32,7 +284,7 @@ fn sample_catalog() -> Vec<Product> {
             inventory_count: 50,
             seller_name: "TechStore Demo".into(),
             seller_id: "merchant-001".into(),
-            updated_at: chrono::Utc::now(),
+            updated_at: Utc::now(),
         },
         Product {
             product_id: "prod-002".into(),
@@ -46,18 +298,12 @@ fn sample_catalog() -> Vec<Product> {
             inventory_count: 30,
             seller_name: "TechStore Demo".into(),
             seller_id: "merchant-001".into(),
-            updated_at: chrono::Utc::now(),
+            updated_at: Utc::now(),
         },
     ]
 }
 
-async fn get_manifest() -> Json<MerchantManifest> {
-    Json(sample_manifest())
-}
-
-async fn get_catalog() -> Json<Vec<Product>> {
-    Json(sample_catalog())
-}
+// ─── Main ─────────────────────────────────────────────────────────────────
 
 #[tokio::main]
 async fn main() {
@@ -65,12 +311,38 @@ async fn main() {
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
 
+    let database_url = std::env::var("DATABASE_URL")
+        .unwrap_or_else(|_| "postgres://postgres:password@localhost:5432/mandate_gateway".into());
+
+    let db = PgPoolOptions::new()
+        .max_connections(5)
+        .connect(&database_url)
+        .await
+        .expect("failed to connect to database");
+
+    let key_id = std::env::var("RAZORPAY_KEY_ID").unwrap_or_default();
+    let key_secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
+
+    let (signer, _signing_key) = MandateSigner::generate();
+    let razorpay_orders = OrdersApi::new(&key_id, &key_secret);
+
+    let state = AppState {
+        db,
+        signer: Arc::new(signer),
+        razorpay_orders: Arc::new(razorpay_orders),
+    };
+
     let app = Router::new()
         .route("/manifest", get(get_manifest))
-        .route("/catalog", get(get_catalog));
+        .route("/catalog", get(get_catalog))
+        .route("/mandate", post(issue_mandate))
+        .route("/purchase", post(execute_purchase))
+        .route("/audit/{mandate_id}", get(get_audit_trail))
+        .layer(TraceLayer::new_for_http())
+        .with_state(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
-    tracing::info!("catalog-service listening on {}", addr);
+    tracing::info!("gateway listening on {}", addr);
 
     let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
     axum::serve(listener, app).await.unwrap();
