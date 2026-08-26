@@ -1,6 +1,7 @@
 use mandate_engine::{Mandate, MandateSigner};
 
 use crate::decision::{BlockReason, Decision};
+use crate::nonce_checker::NonceChecker;
 use crate::rules;
 
 /// Deterministic policy evaluator — no LLM, no ML, plain code.
@@ -10,20 +11,22 @@ use crate::rules;
 ///
 /// # Order of evaluation
 ///
-/// 1. Signature verification (mandate integrity)
-/// 2. Expiry / revocation check
-/// 3. Exhaustion check
-/// 4. Budget check (amount vs remaining)
-/// 5. Scope check (category in whitelist)
+/// 1. Nonce replay check (has this nonce been used before?)
+/// 2. Signature verification (mandate integrity)
+/// 3. Expiry / revocation check
+/// 4. Exhaustion check
+/// 5. Budget check (amount vs remaining)
+/// 6. Scope check (category in whitelist)
 ///
 /// Fail-fast: the first violation produces the decision. No partial passes.
 pub struct PolicyEvaluator<'a> {
     signer: &'a MandateSigner,
+    nonce_checker: &'a dyn NonceChecker,
 }
 
 impl<'a> PolicyEvaluator<'a> {
-    pub fn new(signer: &'a MandateSigner) -> Self {
-        Self { signer }
+    pub fn new(signer: &'a MandateSigner, nonce_checker: &'a dyn NonceChecker) -> Self {
+        Self { signer, nonce_checker }
     }
 
     /// Evaluates a purchase request against the given mandate.
@@ -31,7 +34,34 @@ impl<'a> PolicyEvaluator<'a> {
     /// Returns a [`Decision`] — Allow, Block, or Escalate. The caller must
     /// respect the decision before making any payment call.
     pub fn evaluate(&self, mandate: &Mandate, amount: i64, category: &str) -> Decision {
-        // 1. Signature verification — tampered mandate = hard block
+        // 1. Nonce replay check — has this nonce been used before?
+        match self.nonce_checker.is_nonce_fresh(&mandate.nonce) {
+            Ok(true) => {} // nonce is fresh, continue
+            Ok(false) => {
+                tracing::warn!(
+                    mandate_id = %mandate.mandate_id,
+                    nonce = %mandate.nonce,
+                    "nonce replay detected — nonce already used"
+                );
+                return Decision::Block {
+                    reason: BlockReason::ReplayDetected,
+                    detail: format!("nonce {} already used", mandate.nonce),
+                };
+            }
+            Err(e) => {
+                tracing::error!(
+                    mandate_id = %mandate.mandate_id,
+                    error = %e,
+                    "nonce check failed — database error"
+                );
+                return Decision::Block {
+                    reason: BlockReason::ReplayDetected,
+                    detail: format!("nonce check failed: {e}"),
+                };
+            }
+        }
+
+        // 2. Signature verification — tampered mandate = hard block
         match self.signer.verify(mandate) {
             Ok(true) => {}
             Ok(false) => {
@@ -60,7 +90,7 @@ impl<'a> PolicyEvaluator<'a> {
             }
         }
 
-        // 2. Expiry / revocation check
+        // 3. Expiry / revocation check
         if let Err(v) = rules::check_expiry(mandate) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -71,7 +101,7 @@ impl<'a> PolicyEvaluator<'a> {
             return Decision::Block { reason, detail };
         }
 
-        // 3. Exhaustion check
+        // 4. Exhaustion check
         if let Err(v) = rules::check_exhaustion(mandate) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -82,7 +112,7 @@ impl<'a> PolicyEvaluator<'a> {
             return Decision::Block { reason, detail };
         }
 
-        // 4. Budget check
+        // 5. Budget check
         if let Err(v) = rules::check_budget(mandate, amount) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -93,7 +123,7 @@ impl<'a> PolicyEvaluator<'a> {
             return Decision::Block { reason, detail };
         }
 
-        // 5. Scope check
+        // 6. Scope check
         if let Err(v) = rules::check_scope(mandate, category) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -124,7 +154,31 @@ mod tests {
     use chrono::Utc;
     use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
 
-    fn setup() -> (MandateSigner, Mandate) {
+    /// In-memory nonce checker for tests — tracks which nonces have been used.
+    #[derive(Debug)]
+    struct FakeNonceChecker {
+        used_nonces: std::collections::HashSet<String>,
+    }
+
+    impl FakeNonceChecker {
+        fn new() -> Self {
+            Self {
+                used_nonces: std::collections::HashSet::new(),
+            }
+        }
+
+        fn mark_used(&mut self, nonce: &str) {
+            self.used_nonces.insert(nonce.to_string());
+        }
+    }
+
+    impl crate::nonce_checker::NonceChecker for FakeNonceChecker {
+        fn is_nonce_fresh(&self, nonce: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+            Ok(!self.used_nonces.contains(nonce))
+        }
+    }
+
+    fn setup() -> (MandateSigner, Mandate, FakeNonceChecker) {
         let (signer, _) = MandateSigner::generate();
         let mut mandate = Mandate::new(NewMandate {
             user_id: "user-1".into(),
@@ -137,29 +191,30 @@ mod tests {
             expires_at: Utc::now() + chrono::Duration::hours(1),
         });
         signer.sign(&mut mandate).unwrap();
-        (signer, mandate)
+        let checker = FakeNonceChecker::new();
+        (signer, mandate, checker)
     }
 
     #[test]
     fn allow_within_budget_and_scope() {
-        let (signer, mandate) = setup();
-        let evaluator = PolicyEvaluator::new(&signer);
+        let (signer, mandate, checker) = setup();
+        let evaluator = PolicyEvaluator::new(&signer, &checker);
         let decision = evaluator.evaluate(&mandate, 30_000, "electronics");
         assert!(matches!(decision, Decision::Allow { .. }));
     }
 
     #[test]
     fn block_over_budget() {
-        let (signer, mandate) = setup();
-        let evaluator = PolicyEvaluator::new(&signer);
+        let (signer, mandate, checker) = setup();
+        let evaluator = PolicyEvaluator::new(&signer, &checker);
         let decision = evaluator.evaluate(&mandate, 60_000, "electronics");
         assert!(matches!(decision, Decision::Block { reason: BlockReason::OverBudget, .. }));
     }
 
     #[test]
     fn block_out_of_scope() {
-        let (signer, mandate) = setup();
-        let evaluator = PolicyEvaluator::new(&signer);
+        let (signer, mandate, checker) = setup();
+        let evaluator = PolicyEvaluator::new(&signer, &checker);
         let decision = evaluator.evaluate(&mandate, 10_000, "groceries");
         assert!(matches!(decision, Decision::Block { reason: BlockReason::OutOfScope, .. }));
     }
@@ -178,8 +233,9 @@ mod tests {
             expires_at: Utc::now() - chrono::Duration::hours(1),
         });
         signer.sign(&mut mandate).unwrap();
+        let checker = FakeNonceChecker::new();
 
-        let evaluator = PolicyEvaluator::new(&signer);
+        let evaluator = PolicyEvaluator::new(&signer, &checker);
         let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
         assert!(matches!(decision, Decision::Block { reason: BlockReason::Expired, .. }));
     }
@@ -200,8 +256,19 @@ mod tests {
         });
         signer.sign(&mut mandate).unwrap();
         mandate.max_amount = 999_999; // tamper
+        let checker = FakeNonceChecker::new();
 
-        let evaluator = PolicyEvaluator::new(&signer_other);
+        let evaluator = PolicyEvaluator::new(&signer_other, &checker);
+        let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
+        assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
+    }
+
+    #[test]
+    fn block_nonce_replay() {
+        let (signer, mandate, mut checker) = setup();
+        checker.mark_used(&mandate.nonce); // mark nonce as already used
+
+        let evaluator = PolicyEvaluator::new(&signer, &checker);
         let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
         assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
     }

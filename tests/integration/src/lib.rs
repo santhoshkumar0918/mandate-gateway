@@ -3,10 +3,19 @@ use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
 use policy_engine::{Decision, DecisionKind, PolicyEvaluator};
 use reconciliation::{MismatchDetector, Intent, Outcome, MismatchKind};
 
+/// In-memory nonce checker for integration tests.
+#[derive(Debug)]
+struct FakeNonceChecker;
+
+impl policy_engine::NonceChecker for FakeNonceChecker {
+    fn is_nonce_fresh(&self, _nonce: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(true) // all nonces are fresh in tests
+    }
+}
+
 /// End-to-end: mandate issuance → policy evaluation → happy path.
 #[test]
 fn mandate_to_purchase_happy_path() {
-    // 1. Generate signer and issue a mandate
     let (signer, _) = MandateSigner::generate();
     let mut mandate = Mandate::new(NewMandate {
         user_id: "user-1".into(),
@@ -18,12 +27,10 @@ fn mandate_to_purchase_happy_path() {
         frequency: Frequency::OneTime,
         expires_at: Utc::now() + chrono::Duration::hours(1),
     });
-
-    // 2. Sign the mandate
     signer.sign(&mut mandate).unwrap();
 
-    // 3. Policy engine allows a purchase within bounds
-    let evaluator = PolicyEvaluator::new(&signer);
+    let checker = FakeNonceChecker;
+    let evaluator = PolicyEvaluator::new(&signer, &checker);
     let decision = evaluator.evaluate(&mandate, 30_000, "electronics");
     assert!(matches!(decision, Decision::Allow { .. }));
 }
@@ -44,7 +51,8 @@ fn mandate_over_budget_blocked() {
     });
     signer.sign(&mut mandate).unwrap();
 
-    let evaluator = PolicyEvaluator::new(&signer);
+    let checker = FakeNonceChecker;
+    let evaluator = PolicyEvaluator::new(&signer, &checker);
     let decision = evaluator.evaluate(&mandate, 60_000, "electronics");
     assert_eq!(decision.kind(), DecisionKind::Block);
 }
@@ -62,7 +70,6 @@ fn catalog_drift_mismatch_detected() {
         created_at: Utc::now(),
     };
 
-    // Price drifted between intent and execution
     let outcome = Outcome {
         order_id: "order-001".into(),
         payment_id: "pay-001".into(),

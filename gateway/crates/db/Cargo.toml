@@ -6,6 +6,8 @@ description = "Postgres persistence layer for the Merchant Agent Gateway"
 
 [dependencies]
 mandate-engine = { path = "../mandate-engine" }
+policy-engine = { path = "../policy-engine" }
+tokio = { version = "1", features = ["rt", "rt-multi-thread"] }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }

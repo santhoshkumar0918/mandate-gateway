@@ -5,7 +5,7 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use db::PgPool;
+use db::{PgNonceChecker, PgPool};
 use mandate_engine::{Frequency, MandateSigner, NewMandate};
 use policy_engine::PolicyEvaluator;
 use razorpay_client::orders::OrdersApi;
@@ -25,6 +25,7 @@ use manifest::{Availability, MerchantManifest, Product};
 struct AppState {
     db: PgPool,
     signer: Arc<MandateSigner>,
+    nonce_checker: Arc<PgNonceChecker>,
     razorpay_orders: Arc<OrdersApi>,
 }
 
@@ -88,6 +89,18 @@ struct ErrorResponse {
     error: String,
 }
 
+#[derive(Deserialize)]
+struct RevokeMandateBody {
+    mandate_id: Uuid,
+    reason: Option<String>,
+}
+
+#[derive(Serialize)]
+struct RevokeMandateResponse {
+    mandate_id: Uuid,
+    status: String,
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────
 
 async fn get_manifest() -> Json<MerchantManifest> {
@@ -129,7 +142,7 @@ async fn issue_mandate(
     db::mandate_repo::insert(&state.db, &mandate).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // Audit
+    // Audit: mandate issued
     db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
         event_type: "mandate_issued",
         mandate_id: Some(mandate.mandate_id),
@@ -139,6 +152,7 @@ async fn issue_mandate(
         detail: Some(serde_json::json!({
             "max_amount": mandate.max_amount,
             "scope": mandate.scope,
+            "frequency": mandate.frequency,
         })),
         actor: &mandate.buyer_agent_id,
     }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
@@ -153,6 +167,7 @@ async fn issue_mandate(
     ))
 }
 
+#[axum::debug_handler]
 async fn execute_purchase(
     State(state): State<AppState>,
     Json(body): Json<PurchaseRequest>,
@@ -162,8 +177,8 @@ async fn execute_purchase(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
 
-    // 2. Policy evaluation (includes signature verification)
-    let evaluator = PolicyEvaluator::new(&state.signer);
+    // 2. Policy evaluation (nonce check + signature + expiry + budget + scope)
+    let evaluator = PolicyEvaluator::new(&state.signer, &*state.nonce_checker);
     let order_amount = body.quantity * 129_900; // simplified
     let category = mandate.scope.first().map(|s| s.as_str()).unwrap_or("unknown");
     let decision = evaluator.evaluate(&mandate, order_amount, category);
@@ -199,13 +214,28 @@ async fn execute_purchase(
     db::mandate_repo::increment_spent(&state.db, mandate.mandate_id, order_amount).await
         .map_err(|e| (StatusCode::CONFLICT, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 6. Record intent
+    // 6. Audit: budget debited (the actual money movement commitment)
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "budget_debited",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &mandate.mandate_id.to_string(),
+        decision: "allowed",
+        reason: None,
+        detail: Some(serde_json::json!({
+            "amount_debited": order_amount,
+            "spent_total": mandate.spent_amount + order_amount,
+            "max_amount": mandate.max_amount,
+        })),
+        actor: &mandate.buyer_agent_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 7. Record intent
     let intent_id = Uuid::new_v4();
     db::intent_repo::insert(&state.db, intent_id, mandate.mandate_id,
         &body.product_id, category, order_amount, &mandate.currency).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 7. Create order via Razorpay
+    // 8. Create order via Razorpay
     let order = state.razorpay_orders.create_order(
         order_amount, &mandate.currency, Some(&mandate.mandate_id.to_string()),
     ).await.map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
@@ -214,7 +244,7 @@ async fn execute_purchase(
         order_amount, &mandate.currency, &order.status, Some(&mandate.mandate_id.to_string())).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 8. Audit order creation
+    // 9. Audit: order created
     db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
         event_type: "order_created",
         mandate_id: Some(mandate.mandate_id),
@@ -234,6 +264,39 @@ async fn execute_purchase(
             amount: order_amount,
         }),
     ))
+}
+
+async fn revoke_mandate(
+    State(state): State<AppState>,
+    Json(body): Json<RevokeMandateBody>,
+) -> Result<Json<RevokeMandateResponse>, (StatusCode, Json<ErrorResponse>)> {
+    // 1. Fetch mandate
+    let mandate = db::mandate_repo::find_by_id(&state.db, body.mandate_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
+
+    // 2. Update status to revoked
+    db::mandate_repo::update_status(&state.db, mandate.mandate_id, mandate_engine::MandateStatus::Revoked).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 3. Audit: mandate revoked
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "mandate_revoked",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &mandate.mandate_id.to_string(),
+        decision: "allowed",
+        reason: body.reason.as_deref(),
+        detail: Some(serde_json::json!({
+            "previous_status": "active",
+            "new_status": "revoked",
+        })),
+        actor: &mandate.user_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok(Json(RevokeMandateResponse {
+        mandate_id: mandate.mandate_id,
+        status: "revoked".into(),
+    }))
 }
 
 async fn get_audit_trail(
@@ -325,10 +388,12 @@ async fn main() {
 
     let (signer, _signing_key) = MandateSigner::generate();
     let razorpay_orders = OrdersApi::new(&key_id, &key_secret);
+    let nonce_checker = PgNonceChecker::new(db.clone());
 
     let state = AppState {
         db,
         signer: Arc::new(signer),
+        nonce_checker: Arc::new(nonce_checker),
         razorpay_orders: Arc::new(razorpay_orders),
     };
 
@@ -337,6 +402,7 @@ async fn main() {
         .route("/catalog", get(get_catalog))
         .route("/mandate", post(issue_mandate))
         .route("/purchase", post(execute_purchase))
+        .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit/{mandate_id}", get(get_audit_trail))
         .layer(TraceLayer::new_for_http())
         .with_state(state);

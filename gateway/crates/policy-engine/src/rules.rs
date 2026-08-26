@@ -13,6 +13,7 @@ pub enum RuleViolation {
     Expired { expires_at: String },
     Revoked,
     Exhausted { spent: i64, max: i64 },
+    NonceReplay,
 }
 
 impl RuleViolation {
@@ -42,6 +43,10 @@ impl RuleViolation {
             Self::Exhausted { spent, max } => (
                 BlockReason::Exhausted,
                 format!("mandate budget exhausted: spent {spent} of {max}"),
+            ),
+            Self::NonceReplay => (
+                BlockReason::ReplayDetected,
+                "nonce already used — possible replay attack".into(),
             ),
         }
     }
@@ -90,6 +95,17 @@ pub fn check_exhaustion(mandate: &Mandate) -> Result<(), RuleViolation> {
             spent: mandate.spent_amount,
             max: mandate.max_amount,
         });
+    }
+    Ok(())
+}
+
+/// Checks whether a mandate's nonce has been used before (replay detection).
+///
+/// This is called before any payment action. If the nonce exists in the
+/// database, someone is replaying an old mandate — hard block.
+pub fn check_nonce_replay(nonce_used: bool) -> Result<(), RuleViolation> {
+    if nonce_used {
+        return Err(RuleViolation::NonceReplay);
     }
     Ok(())
 }

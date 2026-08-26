@@ -143,6 +143,20 @@ pub async fn list_by_merchant(
     Ok(rows.into_iter().map(|r| r.into()).collect())
 }
 
+/// Checks whether a nonce has been used before — replay detection.
+///
+/// Returns `true` if the nonce exists in any mandate row, `false` if fresh.
+pub async fn nonce_exists(pool: &PgPool, nonce: &str) -> Result<bool, DbError> {
+    let result = sqlx::query_scalar::<_, i64>(
+        "SELECT COUNT(*) FROM mandates WHERE nonce = $1",
+    )
+    .bind(nonce)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(result > 0)
+}
+
 /// Raw row type that maps to the Postgres mandates table.
 /// We convert to the domain `Mandate` type at the boundary.
 #[derive(sqlx::FromRow)]
