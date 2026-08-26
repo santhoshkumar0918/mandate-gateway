@@ -1,0 +1,13 @@
+[package]
+name = "integration-tests"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+[dependencies]
+mandate-engine = { path = "../../gateway/crates/mandate-engine" }
+policy-engine = { path = "../../gateway/crates/policy-engine" }
+reconciliation = { path = "../../gateway/services/reconciliation" }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+chrono = "0.4"
+uuid = { version = "1", features = ["v4"] }
