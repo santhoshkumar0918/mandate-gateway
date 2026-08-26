@@ -8,7 +8,7 @@ use chrono::Utc;
 use db::{PgNonceChecker, PgPool};
 use mandate_engine::{Frequency, MandateSigner, NewMandate};
 use policy_engine::PolicyEvaluator;
-use razorpay_client::orders::OrdersApi;
+use razorpay_client::RazorpayClient;
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
@@ -26,7 +26,7 @@ struct AppState {
     db: PgPool,
     signer: Arc<MandateSigner>,
     nonce_checker: Arc<PgNonceChecker>,
-    razorpay_orders: Arc<OrdersApi>,
+    razorpay: Arc<RazorpayClient>,
 }
 
 // ─── Request / Response Types ─────────────────────────────────────────────
@@ -236,7 +236,7 @@ async fn execute_purchase(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     // 8. Create order via Razorpay
-    let order = state.razorpay_orders.create_order(
+    let order = state.razorpay.create_order(
         order_amount, &mandate.currency, Some(&mandate.mandate_id.to_string()),
     ).await.map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
 
@@ -387,14 +387,14 @@ async fn main() {
     let key_secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
 
     let (signer, _signing_key) = MandateSigner::generate();
-    let razorpay_orders = OrdersApi::new(&key_id, &key_secret);
+    let razorpay = RazorpayClient::new(&key_id, &key_secret);
     let nonce_checker = PgNonceChecker::new(db.clone());
 
     let state = AppState {
         db,
         signer: Arc::new(signer),
         nonce_checker: Arc::new(nonce_checker),
-        razorpay_orders: Arc::new(razorpay_orders),
+        razorpay: Arc::new(razorpay),
     };
 
     let app = Router::new()
