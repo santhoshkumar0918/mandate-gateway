@@ -6,25 +6,38 @@ and completes a purchase. LLM is used ONLY for intent parsing ("pick something
 under ₹500 in category X") — never for the purchase decision itself.
 """
 
+import json
 import os
-import http
+import http.client
 
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 BUDGET = int(os.getenv("BUDGET", "50000"))  # paise
 CATEGORY = os.getenv("CATEGORY", "electronics")
+USER_ID = os.getenv("USER_ID", "buyer-agent-001")
+MERCHANT_ID = os.getenv("MERCHANT_ID", "merchant-001")
+SHIPPING_ADDRESS = os.getenv("SHIPPING_ADDRESS", "123 Demo Street, Bangalore")
+
+
+def _request(method, path, body=None):
+    """Helper to make HTTP requests to the gateway."""
+    parsed = GATEWAY_URL.replace("http://", "")
+    host, _, port = parsed.partition(":")
+    port = int(port) if port else 80
+
+    conn = http.client.HTTPConnection(host, port)
+    headers = {"Content-Type": "application/json"} if body else {}
+    conn.request(method, path, body=json.dumps(body) if body else None, headers=headers)
+    resp = conn.getresponse()
+    data = resp.read()
+    conn.close()
+    return json.loads(data)
 
 
 def discover_merchant():
     """Fetch merchant manifest and catalog."""
-    with http.client.HTTPConnection(GATEWAY_URL.replace("http://", "")) as conn:
-        conn.request("GET", "/manifest")
-        manifest = conn.getresponse().read()
-
-        conn.request("GET", "/catalog")
-        catalog = conn.getresponse().read()
-
-    import json
-    return json.loads(manifest), json.loads(catalog)
+    manifest = _request("GET", "/manifest")
+    catalog = _request("GET", "/catalog")
+    return manifest, catalog
 
 
 def pick_product(catalog, budget, category):
@@ -40,28 +53,29 @@ def pick_product(catalog, budget, category):
 
 def request_mandate(product):
     """Request a mandate for the selected product."""
-    import json
-    with http.client.HTTPConnection(GATEWAY_URL.replace("http://", "")) as conn:
-        body = json.dumps({
-            "product_id": product["product_id"],
-            "amount": product["price"],
-            "category": product["category"],
-        })
-        conn.request("POST", "/mandate", body, {"Content-Type": "application/json"})
-        return json.loads(conn.getresponse().read())
+    body = {
+        "user_id": USER_ID,
+        "merchant_id": MERCHANT_ID,
+        "buyer_agent_id": "agent-001",
+        "max_amount": BUDGET,
+        "currency": "INR",
+        "scope": [product["category"]],
+        "frequency": "one_time",
+        "expires_in_hours": 1,
+    }
+    return _request("POST", "/mandate", body)
 
 
 def execute_purchase(mandate, product):
     """Execute the purchase via the gateway."""
-    import json
-    with http.client.HTTPConnection(GATEWAY_URL.replace("http://", "")) as conn:
-        body = json.dumps({
-            "mandate_id": mandate["mandate_id"],
-            "product_id": product["product_id"],
-            "amount": product["price"],
-        })
-        conn.request("POST", "/purchase", body, {"Content-Type": "application/json"})
-        return json.loads(conn.getresponse().read())
+    body = {
+        "mandate_id": mandate["mandate_id"],
+        "product_id": product["product_id"],
+        "quantity": 1,
+        "shipping_address": SHIPPING_ADDRESS,
+        "expected_price": product["price"],
+    }
+    return _request("POST", "/purchase", body)
 
 
 def main():
@@ -80,11 +94,17 @@ def main():
 
     print("[buyer-agent] Requesting mandate...")
     mandate = request_mandate(product)
+    if "error" in mandate:
+        print(f"[buyer-agent] Mandate failed: {mandate['error']}")
+        return
     print(f"[buyer-agent] Mandate issued: {mandate['mandate_id']}")
 
     print("[buyer-agent] Executing purchase...")
     result = execute_purchase(mandate, product)
-    print(f"[buyer-agent] Purchase complete: {result['status']}")
+    if "error" in result:
+        print(f"[buyer-agent] Purchase failed: {result['error']}")
+        return
+    print(f"[buyer-agent] Purchase complete: {result['status']} (order: {result['order_id']})")
 
 
 if __name__ == "__main__":
