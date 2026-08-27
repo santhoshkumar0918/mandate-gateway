@@ -1,3 +1,5 @@
+import Link from "next/link";
+
 export default async function ConsentSuccessPage({
   searchParams,
 }: {
@@ -56,12 +58,19 @@ export default async function ConsentSuccessPage({
             : "The mandate request has been denied. The agent will not be able to transact."}
         </p>
 
-        <div className="rounded-lg border border-card-border bg-card p-4">
+        <div className="rounded-lg border border-card-border bg-card p-4 mb-4">
           <p className="text-sm text-muted">Mandate ID</p>
           <p className="font-mono text-sm text-foreground mt-1">
             {mandate_id || "unknown"}
           </p>
         </div>
+
+        <Link
+          href={`/audit?mandate_id=${mandate_id}`}
+          className="inline-flex items-center rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:opacity-90"
+        >
+          View Audit Trail
+        </Link>
       </div>
     </div>
   );

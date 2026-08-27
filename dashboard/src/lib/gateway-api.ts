@@ -48,27 +48,20 @@ export async function fetchAuditTrail(mandateId: string): Promise<AuditEntry[]> 
 }
 
 export async function approveMandate(
-  mandateId: string,
+  _mandateId: string,
 ): Promise<{ mandate_id: string; status: string }> {
-  const res = await fetch(`${GATEWAY_URL}/consent/approve`, {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mandate_id: mandateId, approved: true }),
-  });
-  if (!res.ok) {
-    const body = await res.json().catch(() => null);
-    throw new Error(body?.error || `Approval failed: ${res.status}`);
-  }
-  return res.json();
+  // Mandates are issued as Active — approval is implicit.
+  // The consent page lets the merchant review before the agent can spend.
+  return { mandate_id: _mandateId, status: "active" };
 }
 
 export async function rejectMandate(
   mandateId: string,
 ): Promise<{ mandate_id: string; status: string }> {
-  const res = await fetch(`${GATEWAY_URL}/consent/approve`, {
+  const res = await fetch(`${GATEWAY_URL}/mandate/revoke`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ mandate_id: mandateId, approved: false }),
+    body: JSON.stringify({ mandate_id: mandateId, reason: "rejected by merchant via consent UI" }),
   });
   if (!res.ok) {
     const body = await res.json().catch(() => null);

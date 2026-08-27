@@ -10,12 +10,20 @@ export default function Home() {
         <p className="text-muted mb-8">
           Merchant consent dashboard for agent mandate approvals.
         </p>
-        <Link
-          href="/consent?mandate_id=demo"
-          className="inline-flex items-center rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:opacity-90"
-        >
-          View Consent Page
-        </Link>
+        <div className="flex flex-col gap-3 items-center">
+          <Link
+            href="/consent?mandate_id=demo"
+            className="inline-flex items-center rounded-lg bg-foreground px-5 py-2.5 text-sm font-medium text-background transition-colors hover:opacity-90"
+          >
+            View Consent Page
+          </Link>
+          <Link
+            href="/audit?mandate_id=demo"
+            className="inline-flex items-center rounded-lg border border-card-border px-5 py-2.5 text-sm font-medium text-foreground transition-colors hover:bg-card"
+          >
+            View Audit Trail
+          </Link>
+        </div>
       </div>
     </div>
   );

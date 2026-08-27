@@ -134,6 +134,59 @@ async fn get_catalog(State(state): State<AppState>) -> Json<Vec<Product>> {
     Json(state.catalog.list())
 }
 
+#[derive(Serialize)]
+struct MandateDetailResponse {
+    mandate_id: Uuid,
+    user_id: String,
+    merchant_id: String,
+    buyer_agent_id: String,
+    max_amount: i64,
+    currency: String,
+    scope: Vec<String>,
+    frequency: String,
+    spent_amount: i64,
+    status: String,
+    nonce: String,
+    signature: String,
+    expires_at: chrono::DateTime<Utc>,
+}
+
+async fn get_mandate(
+    State(state): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<MandateDetailResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let mandate = db::mandate_repo::find_by_id(&state.db, id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
+
+    let status_str = match mandate.status {
+        mandate_engine::MandateStatus::Active => "active",
+        mandate_engine::MandateStatus::Revoked => "revoked",
+        mandate_engine::MandateStatus::Expired => "expired",
+        mandate_engine::MandateStatus::Exhausted => "exhausted",
+    };
+    let frequency_str = match mandate.frequency {
+        mandate_engine::Frequency::OneTime => "one_time",
+        mandate_engine::Frequency::Recurring => "recurring",
+    };
+
+    Ok(Json(MandateDetailResponse {
+        mandate_id: mandate.mandate_id,
+        user_id: mandate.user_id,
+        merchant_id: mandate.merchant_id,
+        buyer_agent_id: mandate.buyer_agent_id,
+        max_amount: mandate.max_amount,
+        currency: mandate.currency,
+        scope: mandate.scope,
+        frequency: frequency_str.to_string(),
+        spent_amount: mandate.spent_amount,
+        status: status_str.to_string(),
+        nonce: mandate.nonce,
+        signature: hex::encode(&mandate.signature),
+        expires_at: mandate.expires_at,
+    }))
+}
+
 /// Simulates catalog price drift for the engineered failure scenario.
 ///
 /// Bumps a product's price so a subsequent purchase charges a different
@@ -463,6 +516,7 @@ async fn main() {
         .route("/manifest", get(get_manifest))
         .route("/catalog", get(get_catalog))
         .route("/mandate", post(issue_mandate))
+        .route("/mandate/{id}", get(get_mandate))
         .route("/purchase", post(execute_purchase))
         .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit/{mandate_id}", get(get_audit_trail))
