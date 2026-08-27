@@ -43,12 +43,20 @@ stand with zero context loss.
 
 ## 1. What this project is
 
-A merchant-side trust layer that makes a Razorpay merchant safely
-transactable by an external AI buyer agent. Every money-moving action
-is gated by a cryptographically signed, scoped mandate and a
-deterministic policy engine — never an LLM. Full audit trail. One
-engineered failure (intent honored, outcome wrong) shown being
-detected and recovered.
+A **product-grade trust layer and protocol for agentic commerce**: it
+makes a Razorpay merchant safely transactable by an external (AI) buyer
+agent. Every money-moving action is gated by a cryptographically signed,
+scoped mandate and a deterministic policy engine — never an LLM. Full
+audit trail. One engineered failure (intent honored, outcome wrong)
+shown being detected and recovered.
+
+This is a **commercial product, not a demo**: merchants and buyer
+agents onboard with real identities, the whole stack runs continuously
+via `docker compose up`, and every feature is reachable through the
+authenticated web app — never a hand-typed URL or a manual script
+(section 2, rule 7). The technical trust engine is the moat; onboarding,
+identity, agent lifecycle, dashboards, and deployment are what make it a
+sellable platform.
 
 Full architecture, market context, and design rationale live in
 `docs/agent-mandate-gateway-proposal` — read it before making any structural decision.
@@ -81,6 +89,19 @@ breaking one of these, stop and flag it instead of proceeding.
    commit, committed as soon as that change is complete — not batched
    up and dumped at the end of a session. See section 10 for the full
    git workflow.
+7. **"Done" means it runs as a product, not a script.** A feature is
+   not complete if a human still has to manually `cargo run` / `bun run
+   dev` / `python3 main.py` and type IDs into URLs to exercise it. A
+   completed slice must be reachable through the real web app (auth →
+   dashboard) against an always-running stack, or be explicitly scoped
+   as an internal/test-only endpoint. Backend-only compiles are
+   prototypes, not product.
+8. **No OpenAI-backed LLMs for the agent flows.** Use the open/openrouter
+   models available through this environment (opencode). Any AI agent
+   that parses natural language must target an OpenRouter/opencode
+   endpoint, not an OpenAI-only SDK. For Rust LLM work, evaluate the
+   `rig` crate first. This does not change rule 1: no LLM ever makes a
+   final money decision.
 
 ## 3. Codebase structure
 
@@ -110,9 +131,8 @@ breaking one of these, stop and flag it instead of proceeding.
 
 ## 4. Subagent roster and routing graph
 
-Eleven subagents in two layers. **Builder agents** (8) own a specific
-part of the codebase and map 1:1 to the eight build phases in
-`docs/proposal.md` section 9. **Support agents** (3) are cross-cutting
+Thirteen subagents in two layers. **Builder agents** (10) own a
+specific part of the codebase. **Support agents** (3) are cross-cutting
 — any builder agent invokes them as part of finishing a task, they
 don't own a directory of their own.
 
@@ -163,7 +183,9 @@ mandate-crypto-agent ──> policy-engine-agent ──> razorpay-gateway-agent
 | `razorpay-gateway-agent` | Orders/Payments/Refunds API calls, webhooks, idempotency | `policy-engine-agent` | `razorpay-test-mode-api` |
 | `buyer-agent-dev` | Reference buyer agent — discover, select, request mandate, purchase | `catalog-manifest-agent`, `mandate-crypto-agent` | `acp-feed-schema` |
 | `reconciliation-agent` | Intent-vs-outcome mismatch detection, row locking, refund trigger | `razorpay-gateway-agent` | `postgres-audit-log-design`, `fintech-security-review` |
-| `audit-dashboard-agent` | Audit log schema + query API + Next.js dashboard + consent UI | `reconciliation-agent` | `postgres-audit-log-design` |
+| `audit-dashboard-agent` | Audit log schema + query API + Next.js dashboard + consent UI | `reconciliation-agent` | `postgres-audit-log-design`, `ui-ux-pro-max` |
+| `product-ux-agent` | Product web app: auth flows, onboarding, merchant/agent/admin dashboards, live audit UI, design system | `audit-dashboard-agent` | `ui-ux-pro-max`, `frontend-design` |
+| `deployment-agent` | Whole-stack orchestration via docker-compose, CI/CD, key persistence, Redis/worker wiring, `docker compose up` = full product | `product-ux-agent` | `fintech-security-review` |
 | `qa-integration-agent` | End-to-end tests, concurrency tests, engineered-failure test harness | everything above | `fintech-security-review` |
 
 **Support agents:**
@@ -178,15 +200,16 @@ Individual subagent definitions live in `.claude/agents/`. Each file
 there is self-contained — description, tools, and system prompt — and
 should not be edited without updating this table if scope changes.
 
-**What was deliberately not added:** a dedicated devops/infra agent.
-Each builder agent updates its own `docker-compose.yml` entry as part
-of its own definition-of-done (section 7) — a whole project this size
-doesn't need a separate owner for a ~30-line compose file, and adding
-one would be exactly the kind of complexity that doesn't buy anything.
+**What was deliberately not added:** a dedicated devops/infra agent is
+NOT in the roster — deployment is owned by the `deployment-agent`,
+because this project is now product-grade (section 7) and needs
+whole-stack orchestration, CI/CD, secure key persistence, and Redis/worker
+wiring that no individual builder owns.
 
 ## 5. Skill roster
 
-Skill definitions live in `.claude/skills/<name>/SKILL.md`. A skill is
+Skill definitions live in `.opencode/skills/<name>/SKILL.md` (and
+`.claude/skills/<name>/SKILL.md` for the canonical ones). A skill is
 a reusable set of patterns and rules, not project-specific code — it
 should stay accurate even if the specific mandate schema changes.
 
@@ -200,6 +223,8 @@ should stay accurate even if the specific mandate schema changes.
 | `research-lookup-protocol` | How to look up official docs/APIs/crate references and report findings without guessing | `research-agent` |
 | `code-review-checklist` | What to check in a diff before approving it — scope, tests, style, rule compliance | `code-review-agent` |
 | `git-commit-conventions` | Atomic commit sizing, message format, when to commit vs. when to keep working | `git-commit-agent` |
+| `ui-ux-pro-max` | UI/UX design intelligence: design systems, product palettes, typography, accessibility, responsive layout, charts, stack-specific implementation | `product-ux-agent`, `audit-dashboard-agent` (any frontend work) |
+| `to-tickets` | Break a plan/spec into tracer-bullet vertical slices with blocking edges, published to the tracker | any builder agent, **only when the user says "tickets" / `/to-tickets`** — not automatic |
 
 ## 6. Coding standards
 
@@ -236,7 +261,10 @@ A component is not done until:
 4. It's referenced correctly in `docker-compose.yml` if it's a
    service.
 5. No secret or key material is hardcoded or logged.
-6. `ANCHOR.md` has been updated to reflect the new state (section 0)
+6. For any user-facing feature: it is reachable end-to-end through
+   the real web app (authenticated flow → dashboard), not exercised
+   by hand-typed URLs or manual scripts (rule 7 in section 2).
+7. `ANCHOR.md` has been updated to reflect the new state (section 0)
    — a component is not "done" if the next session can't resume from
    ANCHOR.md.
 
@@ -250,6 +278,18 @@ Example prompts and which subagent should pick them up:
 - "Build the consent screen" → `audit-dashboard-agent`
 - "Simulate the catalog price drift failure scenario" → `reconciliation-agent`, then `qa-integration-agent` for the test
 - "Set up the product feed endpoint" → `catalog-manifest-agent`
+- "Build the merchant dashboard / onboarding / design system" → `product-ux-agent` (load `ui-ux-pro-max` for every frontend slice)
+- "Wire the whole stack / CI / Redis / key persistence / docker compose" → `deployment-agent`
+
+Client/product concern (not a coding task): when the user asks to break
+a plan into tickets — they will say "tickets" or `/to-tickets` — run the
+`to-tickets` skill (section 5) to produce tracer-bullet vertical slices
+with declared blocking edges, published under `docs/<feature>/`.
+Working/reference/ticket files always live under `docs/` (gitignored — never
+pushed). Once a ticket's work is complete, delete its file from `docs/` and
+record only the outcome in `ANCHOR.md`; the state file is the only thing
+committed. This is only ever triggered explicitly by the user; it is never
+done automatically.
 
 If a prompt doesn't map cleanly to one row, it's a sign the task is
 either too broad (split it) or belongs in `docs/proposal.md` as a

@@ -6,14 +6,38 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-27 by the dashboard wiring + buyer-agent session
+**Last updated:** 2026-08-27 — product up-leveling: honest gap assessment, super-app stack, ticket backlog written, AGENTS.md updated.
 
 ## Current phase
 
-Phases 0–7 complete. Dashboard consent + audit trail wired to real
-gateway API. Buyer-agent updated. Ready for Phase 8 (video/polish).
+Phases 0–7 (trust-engine slices) complete and verified — the money core
+is real. **A strict product review scored us ~28% of a sellable product**:
+the trust engine is the strong 30%, but identity/auth, product UI,
+continuous agents, key persistence, and deployment (the other ~70%) were
+prototype-grade. We are now building the product layer toward a Tier-3
+"super-app / protocol network" target, sequenced through demoable tickets.
+
+**Target tier (super-app):** multi-tenant identity (merchant/agent/admin),
+persisted Postgres source of truth, Redis for cache/jobs/rate-limit,
+continuous agent worker, signing-key persistence at rest, full product
+web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Last completed
+
+0. **Product up-leveling decision + ticket backlog + workflow (this session):**
+   - Honest gap assessment written (trust engine strong; identity/UX/deployment
+     were prototype-grade; overall ~28% of a sellable product).
+   - **Ticket backlog published** — 14 vertical tracer-bullet slices under
+     `docs/product-backlog/issues/01..14-*.md` (see "Product tickets" below).
+     Working/reference files live under `docs/` (gitignored); only the state
+     summary in this file is ever committed. Tickets are cleaned from `docs/`
+     once their work is done.
+   - **AGENTS.md updated**: added `product-ux-agent` + `deployment-agent` to the
+     roster, `ui-ux-pro-max` + `to-tickets` to the skill roster; added
+     non-negotiable rules 7 (runs as a product, not a script) and 8 (no OpenAI —
+     use opencode/OpenRouter free models; evaluate `rig` for Rust).
+   - **Design system generated** into `docs/design-system/mandate-gateway/MASTER.md`
+     (dark-OLED fintech, IBM Plex Sans, `#22C55E` money-accent) via ui-ux-pro-max.
 
 1. **Per-purchase nonce replay protection** (`df1df22`):
    - `PurchaseAuth` type + `sign_auth`/`verify_auth` on `MandateSigner`.
@@ -45,9 +69,36 @@ gateway API. Buyer-agent updated. Ready for Phase 8 (video/polish).
    - Success page now links to audit trail.
    - Dashboard builds clean with `bun run build`.
 
+## Product tickets (backlog — see `docs/product-backlog/issues/`)
+
+14 tracer-bullet vertical slices, blockers declared. Start at the frontier
+(no unblocked peers): **01 (signing-key persistence)** and **02 (catalog →
+Postgres)** are unblocked and are the foundation everything else depends on.
+Full dependency chain: 03←{01,02}; 04←03; 05←03; 06←{02,03,05};
+07←{03,05}; 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11};
+13←all; 14←{05,06,07}.
+
+1. `01-signing-key-persistence` — keypair survives restart (fixes the FATAL
+   in-memory regeneration). No blockers.
+2. `02-catalog-merchants-postgres` — catalog/merchants out of memory → Postgres.
+   No blockers.
+3. `03-auth-service` — merchant/agent/admin signup+login, JWT sessions, RBAC.
+4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
+5. `05-web-app-shell-design-system` — real app shell + locked design system.
+6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
+7. `07-live-audit-stream` — real-time (SSE/websocket) audit stream.
+8. `08-continuous-agent-worker` — agents run on a Redis-backed queue, not a script.
+9. `09-agent-console` — agent's self-service console.
+10. `10-reconciliation-ui-alerting` — make mismatch/refund visible + demoable.
+11. `11-gateway-cache-ratelimit` — Redis cache + per-key rate limiting.
+12. `12-admin-console-observability` — admin console + health/tracing.
+13. `13-cicd-orchestration` — GitHub Actions + `docker compose up` = whole stack.
+14. `14-marketing-landing-demo-polish` — landing page + filmable demo (Phase 8).
+
 ## In progress right now
 
-Nothing mid-flight.
+Nothing mid-flight. Backlog published; awaiting user go-ahead on which
+ticket the next session starts (recommended: **01 + 02** — the foundation).
 
 ## Blocked / waiting on
 
@@ -59,11 +110,18 @@ Nothing is off-limits.
 
 ## Next task
 
-Phase 8: video/polish pass. The full stack is working end-to-end:
-- Gateway: mandate issuance, per-purchase auth, policy evaluation,
-  Razorpay order creation, reconciliation, audit logging.
-- Buyer-agent: discover → pick → mandate → purchase.
-- Dashboard: consent page, approve/reject, success page, audit trail.
+Start the product backlog at the frontier. **Recommended first tickets:**
+`01-signing-key-persistence` (fixes the fatal in-memory key regeneration)
+and `02-catalog-merchants-postgres` (move catalog/merchants into Postgres).
+Both are unblocked and everything else depends on them. Work the frontier
+top-down per the blocking chain in the "Product tickets" section.
 
-Test it all live: `bun run dev` in `dashboard/`, gateway running on
-`:8000`, buyer-agent via `python3 buyer-agent/main.py`.
+Stack/completion notes for whoever resumes:
+- Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
+  `bun run lint` + `bun run build` in `dashboard/`.
+- Design system: read `docs/design-system/mandate-gateway/MASTER.md` before any
+  frontend slice; check `pages/<page>.md` overrides first.
+- Models: use opencode/OpenRouter free models for any LLM intent-work, never
+  OpenAI; for Rust LLM work evaluate the `rig` crate first.
+- Skills: load `to-tickets` when the user says "tickets"/`/to-tickets`;
+  load `ui-ux-pro-max` for every frontend slice.
