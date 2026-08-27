@@ -6,61 +6,44 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-27 by the per-purchase nonce implementation session
+**Last updated:** 2026-08-27 by the dashboard wiring + buyer-agent session
 
 ## Current phase
 
-Phase 7 complete (reconciliation). Per-purchase nonce replay protection
-implemented and verified live. Phases 0–7 + nonce hardening done.
+Phases 0–7 complete. Dashboard consent + audit trail wired to real
+gateway API. Buyer-agent updated. Ready for Phase 8 (video/polish).
 
 ## Last completed
 
-Implemented per-purchase nonce replay protection — the core fix that makes
-the live gateway purchasable:
+1. **Per-purchase nonce replay protection** (`df1df22`):
+   - `PurchaseAuth` type + `sign_auth`/`verify_auth` on `MandateSigner`.
+   - Fixed mandate `signing_payload()` — removed mutable fields
+     (`spent_amount`, `status`, `nonce`) so signature stays valid across
+     the mandate lifecycle.
+   - `used_nonces` table (`002_add_used_nonces.sql`), `consume_and_increment_spent`
+     atomic nonce+budget transaction, `DbError::Replay` variant.
+   - Evaluator now takes `&PurchaseAuth` — verifies auth signature + auth
+     amounts. Nonce consumed at DB layer.
+   - Removed `PgNonceChecker`, `NonceChecker` trait, `nonce_exists`.
+   - Verified live: two purchases succeed, third blocked OverBudget, audit
+     trail logs everything correctly.
 
-- **`PurchaseAuth` type** (`mandate-engine/src/purchase_auth.rs`): signed,
-  per-purchase authorization carrying `auth_id`, `mandate_id`, fresh
-  `nonce`, `amount`, `currency`, `product_id`, `category`, `created_at`.
-  Signing payload covers immutable fields only; nonce is the replay token.
-- **`MandateSigner::sign_auth` / `verify_auth`** (`signing.rs`): sign and
-  verify purchase authorizations; `signing.rs` now has 6 tests (3 auth).
-- **Fixed mandate `signing_payload()`** (`mandate.rs`): removed mutable
-  fields (`spent_amount`, `status`, `nonce`) from the signing payload so
-  the mandate signature remains valid across its lifecycle after spending.
-- **Policy evaluator** (`evaluator.rs`): `evaluate(&mandate, &auth)` now
-  verifies mandate signature + auth signature + expiry/budget/scope against
-  the auth's amounts. Nonce check moved OUT of evaluator (consumed at DB
-  layer).
-- **`used_nonces` table** (`002_add_used_nonces.sql`): UNIQUE constraint
-  is the trust-critical replay guard.
-- **`db::used_nonce_repo`**: `mark_used` (atomic insert ON CONFLICT DO
-  NOTHING) + `is_used` helper.
-- **`db::mandate_repo::consume_and_increment_spent`**: single-transaction
-  function that inserts nonce into `used_nonces` + increments `spent_amount`
-  atomically; returns `DbError::Replay` on conflict.
-- **`DbError::Replay`** variant added for clean replay detection.
-- **Catalog-service `execute_purchase`**: builds + signs `PurchaseAuth`,
-  passes to `PolicyEvaluator::evaluate`, uses `consume_and_increment_spent`
-  atomically.
-- **Removed `PgNonceChecker`** and `NonceChecker` trait (dead now);
-  `nonce_exists` / `find_by_nonce` removed from `mandate_repo.rs`.
-- **Buyer-agent not yet updated** — still sends old request schema; needs
-  `max_amount`/`scope` for mandate request, `quantity`/`shipping_address`/
-  `expected_price` for purchase.
+2. **Buyer-agent updated** (`8814bcb`):
+   - `request_mandate` sends `user_id`, `merchant_id`, `buyer_agent_id`,
+     `max_amount`, `currency`, `scope`, `frequency`, `expires_in_hours`.
+   - `execute_purchase` sends `mandate_id`, `product_id`, `quantity`,
+     `shipping_address`, `expected_price`.
+   - Verified live: agent discovers merchant, picks product, issues
+     mandate, completes purchase end-to-end.
 
-### Verified live
-
-Full end-to-end on `localhost:8000` with real Razorpay test keys:
-1. Mandate issued → `e45ef150-...` (signed, 1h expiry)
-2. Purchase prod-001 → order created, mismatch detected (expected 1299 vs
-   actual 129900 paise — `expected_price` is in paise, catalog price is
-   in paise; drift detected correctly)
-3. Purchase prod-002 → order created, mismatch detected
-4. Third purchase → blocked: OverBudget
-5. Audit trail: mandate_issued → purchase_attempt → budget_debited →
-   order_created → mismatch_detected → refund_failed (all correct)
-
-Tests: 32 unit tests pass, clippy `-D warnings` clean.
+3. **Dashboard wired to real gateway** (`b30fae1`):
+   - Added `GET /mandate/{id}` endpoint to gateway.
+   - Fixed `approveMandate` (no-op — mandates are active on issuance)
+     and `rejectMandate` (calls `POST /mandate/revoke`).
+   - Added `/audit` page: full audit trail with decision badges, detail
+     JSON, and timestamp.
+   - Success page now links to audit trail.
+   - Dashboard builds clean with `bun run build`.
 
 ## In progress right now
 
@@ -68,16 +51,19 @@ Nothing mid-flight.
 
 ## Blocked / waiting on
 
-1. **Buyer-agent update** (`buyer-agent/main.py`): request schemas are
-   outdated — needs wiring to the real gateway API so the demo buyer agent
-   works end-to-end.
+Nothing.
 
 ## Do not touch
 
-Nothing is off-limits right now.
+Nothing is off-limits.
 
 ## Next task
 
-Update `buyer-agent/main.py` to match the real gateway API so the full
-buyer-agent → mandate → purchase flow works with the live gateway. After
-that: dashboard/consent UI walkthrough, then Phase 8 (video/polish).
+Phase 8: video/polish pass. The full stack is working end-to-end:
+- Gateway: mandate issuance, per-purchase auth, policy evaluation,
+  Razorpay order creation, reconciliation, audit logging.
+- Buyer-agent: discover → pick → mandate → purchase.
+- Dashboard: consent page, approve/reject, success page, audit trail.
+
+Test it all live: `bun run dev` in `dashboard/`, gateway running on
+`:8000`, buyer-agent via `python3 buyer-agent/main.py`.
