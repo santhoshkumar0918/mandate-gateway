@@ -24,6 +24,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Last completed
 
+0.5. **Ticket 01 — signing-key persistence at rest** (`4ab68fb`):
+    - Signing key is generated once, encrypted with AES-256-GCM under an env
+      master secret (`MANDATE_MASTER_KEY`), and stored in a new `keychain`
+      table (`audit/migrations/003_keychain.sql`). Every boot loads the same
+      key — a restart no longer invalidates previously issued mandates.
+    - New `db::keychain_repo::KeychainRepo::load_or_create` (returns stored
+      key, or persists a fresh one), `DbError::Crypto`, and
+      `MandateSigner::from_key_bytes`.
+    - Tests: unit (`from_key_bytes_reuses_same_key`), DB-backed integration
+      (`load_or_create_with_restart`), and a live kill+restart boot verified a
+      single unchanged key_id. Gateway port now env-configurable (`PORT`).
+    - Also repaired pre-existing missing `reconciliation` imports in the
+      integration harness so its tests run.
+    - **Done — ticket file `docs/product-backlog/issues/01-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -71,17 +86,17 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-14 tracer-bullet vertical slices, blockers declared. Start at the frontier
-(no unblocked peers): **01 (signing-key persistence)** and **02 (catalog →
-Postgres)** are unblocked and are the foundation everything else depends on.
-Full dependency chain: 03←{01,02}; 04←03; 05←03; 06←{02,03,05};
-07←{03,05}; 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11};
-13←all; 14←{05,06,07}.
+13 remaining tracer-bullet vertical slices, blockers declared. Work the
+frontier (no unblocked peers): **02 (catalog → Postgres)** is currently
+unblocked and is the next foundation slice everything else depends on.
+Ticket **01 (signing-key persistence) is DONE** (`4ab68fb`) — see "Last
+completed". Full remaining chain: 03←02; 04←03; 05←03; 06←{02,03,05};
+07←{03,05}; 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
+14←{05,06,07}.
 
-1. `01-signing-key-persistence` — keypair survives restart (fixes the FATAL
-   in-memory regeneration). No blockers.
+1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. `02-catalog-merchants-postgres` — catalog/merchants out of memory → Postgres.
-   No blockers.
+   No blockers. (NEXT.)
 3. `03-auth-service` — merchant/agent/admin signup+login, JWT sessions, RBAC.
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
@@ -97,8 +112,7 @@ Full dependency chain: 03←{01,02}; 04←03; 05←03; 06←{02,03,05};
 
 ## In progress right now
 
-Nothing mid-flight. Backlog published; awaiting user go-ahead on which
-ticket the next session starts (recommended: **01 + 02** — the foundation).
+Ticket **02: catalog + merchants to Postgres source of truth**.
 
 ## Blocked / waiting on
 
@@ -110,11 +124,10 @@ Nothing is off-limits.
 
 ## Next task
 
-Start the product backlog at the frontier. **Recommended first tickets:**
-`01-signing-key-persistence` (fixes the fatal in-memory key regeneration)
-and `02-catalog-merchants-postgres` (move catalog/merchants into Postgres).
-Both are unblocked and everything else depends on them. Work the frontier
-top-down per the blocking chain in the "Product tickets" section.
+Work the backlog frontier. **Ticket 02 `02-catalog-merchants-postgres`
+(move catalog + merchants out of the in-memory `CatalogStore` into
+Postgres) is next and unblocked.** Work the frontier top-down per the
+blocking chain in the "Product tickets" section.
 
 Stack/completion notes for whoever resumes:
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
