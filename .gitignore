@@ -2,3 +2,4 @@
 docs/
 gateway/target/
 tests/integration/target/
+.env

@@ -5,23 +5,10 @@
 #[cfg(test)]
 mod tests {
     use chrono::Utc;
+    use mandate_engine::purchase_auth::PurchaseAuth;
     use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
     use policy_engine::{Decision, DecisionKind, PolicyEvaluator};
-    use reconciliation::{
-        Intent, IssuedRefund, MismatchKind, MismatchDetector, Outcome, RefundProvider,
-        ReconcileService,
-    };
 
-
-/// In-memory nonce checker for integration tests.
-#[derive(Debug)]
-struct FakeNonceChecker;
-
-impl policy_engine::NonceChecker for FakeNonceChecker {
-    fn is_nonce_fresh(&self, _nonce: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-        Ok(true) // all nonces are fresh in tests
-    }
-}
 
 /// Counts refund calls so tests can assert idempotency — a double refund is
 /// a real-money bug this test exists to catch. Each issued refund gets a
@@ -46,6 +33,17 @@ impl RefundProvider for FakeRefundProvider {
     }
 }
 
+fn signed_auth(signer: &MandateSigner, mandate: &Mandate, amount: i64, category: &str) -> PurchaseAuth {
+    let mut auth = PurchaseAuth::new(
+        mandate.mandate_id,
+        amount,
+        &mandate.currency,
+        "prod-001",
+        category,
+    );
+    signer.sign_auth(&mut auth).unwrap();
+    auth
+}
 
 /// End-to-end: mandate issuance → policy evaluation → happy path.
 #[test]
@@ -63,9 +61,9 @@ fn mandate_to_purchase_happy_path() {
     });
     signer.sign(&mut mandate).unwrap();
 
-    let checker = FakeNonceChecker;
-    let evaluator = PolicyEvaluator::new(&signer, &checker);
-    let decision = evaluator.evaluate(&mandate, 30_000, "electronics");
+    let evaluator = PolicyEvaluator::new(&signer);
+    let auth = signed_auth(&signer, &mandate, 30_000, "electronics");
+    let decision = evaluator.evaluate(&mandate, &auth);
     assert!(matches!(decision, Decision::Allow { .. }));
 }
 
@@ -85,9 +83,9 @@ fn mandate_over_budget_blocked() {
     });
     signer.sign(&mut mandate).unwrap();
 
-    let checker = FakeNonceChecker;
-    let evaluator = PolicyEvaluator::new(&signer, &checker);
-    let decision = evaluator.evaluate(&mandate, 60_000, "electronics");
+    let evaluator = PolicyEvaluator::new(&signer);
+    let auth = signed_auth(&signer, &mandate, 60_000, "electronics");
+    let decision = evaluator.evaluate(&mandate, &auth);
     assert_eq!(decision.kind(), DecisionKind::Block);
 }
 

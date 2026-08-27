@@ -327,7 +327,6 @@ version = "0.1.0"
 dependencies = [
  "chrono",
  "mandate-engine",
- "policy-engine",
  "serde",
  "serde_json",
  "sqlx",
@@ -1339,6 +1338,7 @@ dependencies = [
  "thiserror",
  "tokio",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

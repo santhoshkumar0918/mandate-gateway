@@ -14,4 +14,7 @@ pub enum DbError {
 
     #[error("mandate not found: {0}")]
     NotFound(String),
+
+    #[error("replay detected: nonce {0} already consumed")]
+    Replay(String),
 }

@@ -19,10 +19,8 @@
 
 pub mod decision;
 pub mod evaluator;
-pub mod nonce_checker;
 pub mod rules;
 
 pub use decision::{Decision, DecisionKind};
 pub use evaluator::PolicyEvaluator;
-pub use nonce_checker::NonceChecker;
 pub use rules::RuleViolation;

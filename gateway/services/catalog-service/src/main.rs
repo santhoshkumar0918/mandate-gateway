@@ -5,7 +5,8 @@ use axum::{
     Json, Router,
 };
 use chrono::Utc;
-use db::{PgNonceChecker, PgPool};
+use db::PgPool;
+use mandate_engine::purchase_auth::PurchaseAuth;
 use mandate_engine::{Frequency, MandateSigner, NewMandate};
 use policy_engine::PolicyEvaluator;
 use razorpay_client::RazorpayClient;
@@ -28,7 +29,6 @@ use manifest::{MerchantManifest, Product};
 struct AppState {
     db: PgPool,
     signer: Arc<MandateSigner>,
-    nonce_checker: Arc<PgNonceChecker>,
     razorpay: Arc<RazorpayClient>,
     catalog: CatalogStore,
     reconcile: ReconcileService<RazorpayRefundProvider>,
@@ -225,19 +225,27 @@ async fn execute_purchase(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
 
-    // 2. Policy evaluation (nonce check + signature + expiry + budget + scope)
+    // 2. Policy evaluation (auth signature + expiry + budget + scope)
     let product = state
         .catalog
         .get(&body.product_id)
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
 
-    // The expected price is what the product costs in the catalog the moment
-    // the purchase executes. If a drift was simulated, this is the drifted
-    // price. The Intent (recorded lower) holds what the agent intended.
     let order_amount = product.price * body.quantity;
-    let evaluator = PolicyEvaluator::new(&state.signer, &*state.nonce_checker);
-    let category = &product.category;
-    let decision = evaluator.evaluate(&mandate, order_amount, category);
+
+    // Build and sign a per-purchase authorization (replay-protected by its nonce)
+    let mut auth = PurchaseAuth::new(
+        mandate.mandate_id,
+        order_amount,
+        &mandate.currency,
+        &body.product_id,
+        &product.category,
+    );
+    state.signer.sign_auth(&mut auth)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let evaluator = PolicyEvaluator::new(&state.signer);
+    let decision = evaluator.evaluate(&mandate, &auth);
 
     // 3. Audit the decision
     let (decision_str, reason_str) = match &decision {
@@ -266,8 +274,8 @@ async fn execute_purchase(
         }
     }
 
-    // 5. Increment spent amount (double-spend prevention)
-    db::mandate_repo::increment_spent(&state.db, mandate.mandate_id, order_amount).await
+    // 5. Atomically consume the auth nonce and debit the budget (replay + double-spend prevention)
+    db::mandate_repo::consume_and_increment_spent(&state.db, mandate.mandate_id, &auth.nonce, order_amount).await
         .map_err(|e| (StatusCode::CONFLICT, Json(ErrorResponse { error: e.to_string() })))?;
 
     // 6. Audit: budget debited (the actual money movement commitment)
@@ -291,7 +299,7 @@ async fn execute_purchase(
     let intent_id = Uuid::new_v4();
     let expected_price = body.expected_price * body.quantity;
     db::intent_repo::insert(&state.db, intent_id, mandate.mandate_id,
-        &body.product_id, category, expected_price, &mandate.currency).await
+        &body.product_id, &auth.category, expected_price, &mandate.currency).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     // 8. Create order via Razorpay at the live (possibly drifted) price
@@ -330,7 +338,7 @@ async fn execute_purchase(
         intent_id,
         mandate_id: mandate.mandate_id,
         product_id: body.product_id.clone(),
-        category: category.clone(),
+        category: auth.category.clone(),
         expected_price,
         currency: mandate.currency.clone(),
         created_at: Utc::now(),
@@ -439,7 +447,6 @@ async fn main() {
 
     let (signer, _signing_key) = MandateSigner::generate();
     let razorpay = RazorpayClient::new(&key_id, &key_secret);
-    let nonce_checker = PgNonceChecker::new(db.clone());
 
     let catalog = CatalogStore::new();
     let reconcile = ReconcileService::new(db.clone(), RazorpayRefundProvider(razorpay.clone()));
@@ -447,7 +454,6 @@ async fn main() {
     let state = AppState {
         db,
         signer: Arc::new(signer),
-        nonce_checker: Arc::new(nonce_checker),
         razorpay: Arc::new(razorpay),
         catalog,
         reconcile,

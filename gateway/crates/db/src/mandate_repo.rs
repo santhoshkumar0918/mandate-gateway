@@ -62,18 +62,6 @@ pub async fn find_by_id(pool: &PgPool, id: Uuid) -> Result<Option<Mandate>, DbEr
     Ok(row.map(|r| r.into()))
 }
 
-/// Finds a mandate by nonce — used for replay protection.
-pub async fn find_by_nonce(pool: &PgPool, nonce: &str) -> Result<Option<Mandate>, DbError> {
-    let row = sqlx::query_as::<_, MandateRow>(
-        "SELECT * FROM mandates WHERE nonce = $1",
-    )
-    .bind(nonce)
-    .fetch_optional(pool)
-    .await?;
-
-    Ok(row.map(|r| r.into()))
-}
-
 /// Atomically increments the spent_amount on a mandate.
 ///
 /// This is the double-spend prevention. Two concurrent calls will serialize
@@ -103,6 +91,58 @@ pub async fn increment_spent(
         )));
     }
 
+    Ok(())
+}
+
+/// Atomically consumes a per-purchase authorization nonce and debits the
+/// mandate's budget in a single transaction.
+///
+/// This is the trust-critical replay-and-double-spend guard:
+///
+/// - The nonce is inserted into `used_nonces` first, with `ON CONFLICT DO
+///   NOTHING`. If it was already consumed, the function returns
+///   [`DbError::Replay`] and *nothing* changes — the replayed authorization
+///   can never move money, even under concurrency.
+/// - Only if the nonce was freshly consumed does it proceed to increment
+///   `spent_amount` (guarded by `spent_amount + $1 <= max_amount`).
+/// - Both statements run in one transaction, so a replay is atomic: either the
+///   nonce is consumed and the budget debited together, or neither happens.
+///
+/// Returns the `DbError::Replay` when the nonce is already consumed.
+pub async fn consume_and_increment_spent(
+    pool: &PgPool,
+    mandate_id: Uuid,
+    nonce: &str,
+    amount: i64,
+) -> Result<(), DbError> {
+    let mut txn = pool.begin().await?;
+
+    let consumed = crate::used_nonce_repo::mark_used(&mut txn, mandate_id, nonce).await?;
+    if !consumed {
+        return Err(DbError::Replay(nonce.to_string()));
+    }
+
+    let result = sqlx::query(
+        r#"UPDATE mandates
+           SET spent_amount = spent_amount + $1
+           WHERE mandate_id = $2
+             AND spent_amount + $1 <= max_amount
+             AND status = 'active'"#,
+    )
+    .bind(amount)
+    .bind(mandate_id)
+    .execute(&mut *txn)
+    .await?;
+
+    if result.rows_affected() == 0 {
+        txn.rollback().await?;
+        return Err(DbError::NotFound(format!(
+            "mandate {} not found, not active, or insufficient budget",
+            mandate_id
+        )));
+    }
+
+    txn.commit().await?;
     Ok(())
 }
 

@@ -1,48 +1,32 @@
 use mandate_engine::{Mandate, MandateSigner};
 
 use crate::decision::{BlockReason, Decision};
-use crate::nonce_checker::NonceChecker;
 use crate::rules;
 
 pub struct PolicyEvaluator<'a> {
     signer: &'a MandateSigner,
-    nonce_checker: &'a dyn NonceChecker,
 }
 
 impl<'a> PolicyEvaluator<'a> {
-    pub fn new(signer: &'a MandateSigner, nonce_checker: &'a dyn NonceChecker) -> Self {
-        Self { signer, nonce_checker }
+    pub fn new(signer: &'a MandateSigner) -> Self {
+        Self { signer }
     }
 
-    pub fn evaluate(&self, mandate: &Mandate, amount: i64, category: &str) -> Decision {
-        // 1. Nonce replay check — has this nonce been used before?
-        match self.nonce_checker.is_nonce_fresh(&mandate.nonce) {
-            Ok(true) => {} // nonce is fresh, continue
-            Ok(false) => {
-                tracing::warn!(
-                    mandate_id = %mandate.mandate_id,
-                    nonce = %mandate.nonce,
-                    "nonce replay detected — nonce already used"
-                );
-                return Decision::Block {
-                    reason: BlockReason::ReplayDetected,
-                    detail: format!("nonce {} already used", mandate.nonce),
-                };
-            }
-            Err(e) => {
-                tracing::error!(
-                    mandate_id = %mandate.mandate_id,
-                    error = %e,
-                    "nonce check failed — database error"
-                );
-                return Decision::Block {
-                    reason: BlockReason::ReplayDetected,
-                    detail: format!("nonce check failed: {e}"),
-                };
-            }
-        }
+    /// Evaluates a single purchase authorization against a mandate.
+    ///
+    /// The `amount` and `category` in scope/budget checks come from the
+    /// authorization itself — which is signed — so a caller can't argue a
+    /// different amount after the fact.
+    ///
+    /// Nonce replay is NOT checked here: the authorization's nonce is consumed
+    /// atomically with the budget debit by the caller (see the `used_nonces`
+    /// table), so a replayed authorization can never move money twice even
+    /// under concurrency.
+    pub fn evaluate(&self, mandate: &Mandate, auth: &mandate_engine::PurchaseAuth) -> Decision {
+        let amount = auth.amount;
+        let category = &auth.category;
 
-        // 2. Signature verification — tampered mandate = hard block
+        // 1. Mandate signature — proves the mandate was issued and un-tampered.
         match self.signer.verify(mandate) {
             Ok(true) => {}
             Ok(false) => {
@@ -71,6 +55,33 @@ impl<'a> PolicyEvaluator<'a> {
             }
         }
 
+        // 2. Authorization signature — this specific purchase was signed.
+        match self.signer.verify_auth(auth) {
+            Ok(true) => {}
+            Ok(false) => {
+                tracing::warn!(
+                    auth_id = %auth.auth_id,
+                    mandate_id = %mandate.mandate_id,
+                    "purchase authorization signature verification failed"
+                );
+                return Decision::Block {
+                    reason: BlockReason::ReplayDetected,
+                    detail: "purchase authorization signature verification failed".into(),
+                };
+            }
+            Err(e) => {
+                tracing::warn!(
+                    auth_id = %auth.auth_id,
+                    error = %e,
+                    "purchase authorization not signed"
+                );
+                return Decision::Block {
+                    reason: BlockReason::ReplayDetected,
+                    detail: format!("purchase authorization not signed: {e}"),
+                };
+            }
+        }
+
         // 3. Expiry / revocation check
         if let Err(v) = rules::check_expiry(mandate) {
             let (reason, detail) = v.into_block();
@@ -93,7 +104,7 @@ impl<'a> PolicyEvaluator<'a> {
             return Decision::Block { reason, detail };
         }
 
-        // 5. Budget check
+        // 5. Budget check (against the signed authorization amount)
         if let Err(v) = rules::check_budget(mandate, amount) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -104,7 +115,7 @@ impl<'a> PolicyEvaluator<'a> {
             return Decision::Block { reason, detail };
         }
 
-        // 6. Scope check
+        // 6. Scope check (against the signed authorization category)
         if let Err(v) = rules::check_scope(mandate, category) {
             let (reason, detail) = v.into_block();
             tracing::warn!(
@@ -133,32 +144,11 @@ impl<'a> PolicyEvaluator<'a> {
 mod tests {
     use super::*;
     use chrono::Utc;
+    use mandate_engine::purchase_auth::PurchaseAuth;
     use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
+    use uuid::Uuid;
 
-    #[derive(Debug)]
-    struct FakeNonceChecker {
-        used_nonces: std::collections::HashSet<String>,
-    }
-
-    impl FakeNonceChecker {
-        fn new() -> Self {
-            Self {
-                used_nonces: std::collections::HashSet::new(),
-            }
-        }
-
-        fn mark_used(&mut self, nonce: &str) {
-            self.used_nonces.insert(nonce.to_string());
-        }
-    }
-
-    impl crate::nonce_checker::NonceChecker for FakeNonceChecker {
-        fn is_nonce_fresh(&self, nonce: &str) -> Result<bool, Box<dyn std::error::Error + Send + Sync>> {
-            Ok(!self.used_nonces.contains(nonce))
-        }
-    }
-
-    fn setup() -> (MandateSigner, Mandate, FakeNonceChecker) {
+    fn setup() -> (MandateSigner, Mandate) {
         let (signer, _) = MandateSigner::generate();
         let mut mandate = Mandate::new(NewMandate {
             user_id: "user-1".into(),
@@ -171,31 +161,45 @@ mod tests {
             expires_at: Utc::now() + chrono::Duration::hours(1),
         });
         signer.sign(&mut mandate).unwrap();
-        let checker = FakeNonceChecker::new();
-        (signer, mandate, checker)
+        (signer, mandate)
+    }
+
+    fn signed_auth(signer: &MandateSigner, mandate: &Mandate, amount: i64, category: &str) -> PurchaseAuth {
+        let mut auth = PurchaseAuth::new(
+            mandate.mandate_id,
+            amount,
+            &mandate.currency,
+            "prod-001",
+            category,
+        );
+        signer.sign_auth(&mut auth).unwrap();
+        auth
     }
 
     #[test]
     fn allow_within_budget_and_scope() {
-        let (signer, mandate, checker) = setup();
-        let evaluator = PolicyEvaluator::new(&signer, &checker);
-        let decision = evaluator.evaluate(&mandate, 30_000, "electronics");
+        let (signer, mandate) = setup();
+        let evaluator = PolicyEvaluator::new(&signer);
+        let auth = signed_auth(&signer, &mandate, 30_000, "electronics");
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Allow { .. }));
     }
 
     #[test]
     fn block_over_budget() {
-        let (signer, mandate, checker) = setup();
-        let evaluator = PolicyEvaluator::new(&signer, &checker);
-        let decision = evaluator.evaluate(&mandate, 60_000, "electronics");
+        let (signer, mandate) = setup();
+        let evaluator = PolicyEvaluator::new(&signer);
+        let auth = signed_auth(&signer, &mandate, 60_000, "electronics");
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::OverBudget, .. }));
     }
 
     #[test]
     fn block_out_of_scope() {
-        let (signer, mandate, checker) = setup();
-        let evaluator = PolicyEvaluator::new(&signer, &checker);
-        let decision = evaluator.evaluate(&mandate, 10_000, "groceries");
+        let (signer, mandate) = setup();
+        let evaluator = PolicyEvaluator::new(&signer);
+        let auth = signed_auth(&signer, &mandate, 10_000, "groceries");
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::OutOfScope, .. }));
     }
 
@@ -213,10 +217,17 @@ mod tests {
             expires_at: Utc::now() - chrono::Duration::hours(1),
         });
         signer.sign(&mut mandate).unwrap();
-        let checker = FakeNonceChecker::new();
+        let mut auth = PurchaseAuth::new(
+            Uuid::new_v4(),
+            10_000,
+            "INR",
+            "prod-001",
+            "electronics",
+        );
+        signer.sign_auth(&mut auth).unwrap();
 
-        let evaluator = PolicyEvaluator::new(&signer, &checker);
-        let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
+        let evaluator = PolicyEvaluator::new(&signer);
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::Expired, .. }));
     }
 
@@ -236,20 +247,42 @@ mod tests {
         });
         signer.sign(&mut mandate).unwrap();
         mandate.max_amount = 999_999; // tamper
-        let checker = FakeNonceChecker::new();
+        let mut auth = PurchaseAuth::new(
+            Uuid::new_v4(),
+            10_000,
+            "INR",
+            "prod-001",
+            "electronics",
+        );
+        signer.sign_auth(&mut auth).unwrap();
 
-        let evaluator = PolicyEvaluator::new(&signer_other, &checker);
-        let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
+        let evaluator = PolicyEvaluator::new(&signer_other);
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
     }
 
     #[test]
-    fn block_nonce_replay() {
-        let (signer, mandate, mut checker) = setup();
-        checker.mark_used(&mandate.nonce); // mark nonce as already used
+    fn block_unsigned_auth() {
+        let (signer, mandate) = setup();
+        let evaluator = PolicyEvaluator::new(&signer);
+        let auth = PurchaseAuth::new(
+            mandate.mandate_id,
+            30_000,
+            "INR",
+            "prod-001",
+            "electronics",
+        ); // never signed
+        let decision = evaluator.evaluate(&mandate, &auth);
+        assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
+    }
 
-        let evaluator = PolicyEvaluator::new(&signer, &checker);
-        let decision = evaluator.evaluate(&mandate, 10_000, "electronics");
+    #[test]
+    fn block_tampered_auth() {
+        let (signer, mandate) = setup();
+        let evaluator = PolicyEvaluator::new(&signer);
+        let mut auth = signed_auth(&signer, &mandate, 30_000, "electronics");
+        auth.amount = auth.amount + 1; // tamper after signing
+        let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
     }
 }

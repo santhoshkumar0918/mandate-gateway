@@ -17,8 +17,10 @@
 
 pub mod error;
 pub mod mandate;
+pub mod purchase_auth;
 pub mod signing;
 
 pub use error::MandateError;
 pub use mandate::{Frequency, Mandate, MandateStatus, NewMandate};
+pub use purchase_auth::PurchaseAuth;
 pub use signing::MandateSigner;

@@ -6,61 +6,71 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-27 by the reconciliation work session
+**Last updated:** 2026-08-27 by the per-purchase nonce implementation session
 
 ## Current phase
 
-Phase 7 — Reconciliation (engineered failure: catalog drift → mismatch
-detection → refund recovery). Phases 0–6 complete.
+Phase 7 complete (reconciliation). Per-purchase nonce replay protection
+implemented and verified live. Phases 0–7 + nonce hardening done.
 
 ## Last completed
 
-Wired the reconciliation flow end-to-end and committed it on `main`:
+Implemented per-purchase nonce replay protection — the core fix that makes
+the live gateway purchasable:
 
-- `ReconcileService` orchestrating detect → persist → refund with a
-  `RefundProvider` seam (Razorpay-backed real impl, in-memory fake in
-  tests).
-- `db::reconcile` with `lock_mandate_and_check_refund_exists` (row-lock
-  serialization + idempotency short-circuit) and `record_recovery`
-  (refund insert + mismatch update + `refund_triggered` audit in one
-  transaction).
-- Catalog-service keeps a mutable `CatalogStore`, records the buyer's
-  intended price on purchase, reconciles the live charge against it, and
-  exposes `POST /admin/simulate-drift`.
-- Fixed audit `decision` values to `allow`/`block`/`escalate` (were
-  `allowed`/`blocked`/`escalated`), which were violating the DB CHECK
-  constraint.
-- Added 2 DB-backed integration tests (drift→refund, idempotency/no
-  double refund); all 5 integration tests and full workspace pass; clippy
-  `-D warnings` clean.
-- Fixed git hygiene: `tests/integration/target/` artifacts untracked +
-  gitignored.
+- **`PurchaseAuth` type** (`mandate-engine/src/purchase_auth.rs`): signed,
+  per-purchase authorization carrying `auth_id`, `mandate_id`, fresh
+  `nonce`, `amount`, `currency`, `product_id`, `category`, `created_at`.
+  Signing payload covers immutable fields only; nonce is the replay token.
+- **`MandateSigner::sign_auth` / `verify_auth`** (`signing.rs`): sign and
+  verify purchase authorizations; `signing.rs` now has 6 tests (3 auth).
+- **Fixed mandate `signing_payload()`** (`mandate.rs`): removed mutable
+  fields (`spent_amount`, `status`, `nonce`) from the signing payload so
+  the mandate signature remains valid across its lifecycle after spending.
+- **Policy evaluator** (`evaluator.rs`): `evaluate(&mandate, &auth)` now
+  verifies mandate signature + auth signature + expiry/budget/scope against
+  the auth's amounts. Nonce check moved OUT of evaluator (consumed at DB
+  layer).
+- **`used_nonces` table** (`002_add_used_nonces.sql`): UNIQUE constraint
+  is the trust-critical replay guard.
+- **`db::used_nonce_repo`**: `mark_used` (atomic insert ON CONFLICT DO
+  NOTHING) + `is_used` helper.
+- **`db::mandate_repo::consume_and_increment_spent`**: single-transaction
+  function that inserts nonce into `used_nonces` + increments `spent_amount`
+  atomically; returns `DbError::Replay` on conflict.
+- **`DbError::Replay`** variant added for clean replay detection.
+- **Catalog-service `execute_purchase`**: builds + signs `PurchaseAuth`,
+  passes to `PolicyEvaluator::evaluate`, uses `consume_and_increment_spent`
+  atomically.
+- **Removed `PgNonceChecker`** and `NonceChecker` trait (dead now);
+  `nonce_exists` / `find_by_nonce` removed from `mandate_repo.rs`.
+- **Buyer-agent not yet updated** — still sends old request schema; needs
+  `max_amount`/`scope` for mandate request, `quantity`/`shipping_address`/
+  `expected_price` for purchase.
 
-Commits: `70f8b4d`, `41aba55`, `4b12085` (local).
+### Verified live
 
-Also hardened the state-discipline workflow: added **section 0 "The state
-contract"** to AGENTS.md (read ANCHOR.md before any code, update it as part
-of every builder agent's closing sequence, and make it a required step in
-the definition of done). Committed as `6d818ad`.
+Full end-to-end on `localhost:8000` with real Razorpay test keys:
+1. Mandate issued → `e45ef150-...` (signed, 1h expiry)
+2. Purchase prod-001 → order created, mismatch detected (expected 1299 vs
+   actual 129900 paise — `expected_price` is in paise, catalog price is
+   in paise; drift detected correctly)
+3. Purchase prod-002 → order created, mismatch detected
+4. Third purchase → blocked: OverBudget
+5. Audit trail: mandate_issued → purchase_attempt → budget_debited →
+   order_created → mismatch_detected → refund_failed (all correct)
+
+Tests: 32 unit tests pass, clippy `-D warnings` clean.
 
 ## In progress right now
 
-Nothing mid-flight. The reconciliation flow is complete and committed.
-All integration + workspace tests green.
+Nothing mid-flight.
 
 ## Blocked / waiting on
 
-Nothing. Two documented, non-blocking reconciliation limitations (for a
-future hardening pass, not blockers):
-
-1. The mandate row lock is released before the external refund call; a
-   crash between a successful Razorpay refund and the DB insert could
-   double-refund at Razorpay (DB unique `refunds.idempotency_key` only
-   guards the recorded double-refund, not the live API call — no
-   idempotency key is sent to Razorpay's create_refund).
-2. The live purchase path sets `payment_id: ""`, so real drift would
-   audit `refund_failed` (graceful) rather than issue a live refund; the
-   full refund path is proven by the fake-provider test.
+1. **Buyer-agent update** (`buyer-agent/main.py`): request schemas are
+   outdated — needs wiring to the real gateway API so the demo buyer agent
+   works end-to-end.
 
 ## Do not touch
 
@@ -68,8 +78,6 @@ Nothing is off-limits right now.
 
 ## Next task
 
-Commit + push the AGENTS.md state-contract hardening (section 0, closing
-sequence, definition-of-done step) along with the ANCHOR.md update. After
-that, the natural next step is an end-to-end run of the drift scenario
-against the running gateway + dashboard, or a hardening pass on the two
-limitations above.
+Update `buyer-agent/main.py` to match the real gateway API so the full
+buyer-agent → mandate → purchase flow works with the live gateway. After
+that: dashboard/consent UI walkthrough, then Phase 8 (video/polish).

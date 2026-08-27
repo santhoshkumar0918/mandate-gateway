@@ -106,10 +106,14 @@ impl Mandate {
         }
     }
 
-    /// Returns the fields to be signed, excluding the signature itself.
+    /// Returns the immutable fields to be signed, excluding the signature itself.
     ///
     /// This is the canonical representation — serializing these fields to
     /// deterministic JSON and signing the bytes produces the mandate signature.
+    ///
+    /// Mutable fields (`spent_amount`, `status`, `nonce`) are deliberately
+    /// excluded: the signature must remain valid across the mandate's entire
+    /// lifecycle, not just at issuance.
     pub fn signing_payload(&self) -> Result<Vec<u8>, serde_json::Error> {
         let payload = SigningPayload {
             mandate_id: self.mandate_id,
@@ -122,9 +126,6 @@ impl Mandate {
             currency: &self.currency,
             scope: &self.scope,
             frequency: &self.frequency,
-            spent_amount: self.spent_amount,
-            status: &self.status,
-            nonce: &self.nonce,
         };
         serde_json::to_vec(&payload)
     }
@@ -141,9 +142,8 @@ impl Mandate {
 /// The subset of mandate fields that get signed.
 ///
 /// Excludes `signature` itself — signing the signature would be circular.
-/// This struct exists to ensure the signing payload is always constructed
-/// from the same fields in the same order, regardless of serialization
-/// order of the full Mandate.
+/// Excludes mutable lifecycle fields (`spent_amount`, `status`, `nonce`)
+/// — the signature must remain valid across the mandate's entire lifecycle.
 #[derive(Serialize)]
 struct SigningPayload<'a> {
     mandate_id: Uuid,
@@ -156,9 +156,6 @@ struct SigningPayload<'a> {
     currency: &'a str,
     scope: &'a [String],
     frequency: &'a Frequency,
-    spent_amount: i64,
-    status: &'a MandateStatus,
-    nonce: &'a str,
 }
 
 #[cfg(test)]

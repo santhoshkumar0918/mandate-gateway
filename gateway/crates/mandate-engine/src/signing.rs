@@ -2,6 +2,7 @@ use ed25519_dalek::{Signer, SigningKey, VerifyingKey};
 
 use crate::error::MandateError;
 use crate::mandate::Mandate;
+use crate::purchase_auth::PurchaseAuth;
 
 /// Ed25519 mandate signer and verifier.
 ///
@@ -94,6 +95,44 @@ impl MandateSigner {
             Err(_) => Ok(false),
         }
     }
+
+    /// Signs a per-purchase authorization and writes the signature into it.
+    ///
+    /// This is what makes a specific purchase move money: without a verifiable
+    /// `PurchaseAuth` signature, the policy engine must refuse the purchase.
+    ///
+    /// # Invariant
+    ///
+    /// An authorization's `nonce` must be consumed exactly once (see the
+    /// `used_nonces` table in the gateway's DB layer). Signing is not
+    /// consumption — consumption happens atomically with the budget debit.
+    pub fn sign_auth(&self, auth: &mut PurchaseAuth) -> Result<(), MandateError> {
+        let payload = auth.signing_payload()?;
+        let signature = self.signing_key.sign(&payload);
+        auth.signature = signature.to_bytes().to_vec();
+        Ok(())
+    }
+
+    /// Verifies a per-purchase authorization's signature against this signing key.
+    ///
+    /// Returns `Ok(true)` if valid, `Ok(false)` if tampered or signed by a
+    /// different key. Does NOT check nonce freshness — that is the DB layer's
+    /// job, atomically with spending.
+    pub fn verify_auth(&self, auth: &PurchaseAuth) -> Result<bool, MandateError> {
+        let payload = auth.signing_payload()?;
+        let signature_bytes: [u8; 64] = auth
+            .signature
+            .as_slice()
+            .try_into()
+            .map_err(|_| MandateError::Crypto("invalid signature length".into()))?;
+
+        let signature = ed25519_dalek::Signature::from_bytes(&signature_bytes);
+
+        match self.signing_key.verify(&payload, &signature) {
+            Ok(()) => Ok(true),
+            Err(_) => Ok(false),
+        }
+    }
 }
 
 #[cfg(test)]
@@ -160,5 +199,53 @@ mod tests {
 
         let result = signer.verify(&mandate);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn auth_sign_and_verify_roundtrip() {
+        let (signer, _) = MandateSigner::generate();
+        let mut auth = crate::purchase_auth::PurchaseAuth::new(
+            uuid::Uuid::new_v4(),
+            12_990,
+            "INR",
+            "prod-001",
+            "electronics",
+        );
+        signer.sign_auth(&mut auth).unwrap();
+        assert!(!auth.signature.is_empty());
+        assert!(signer.verify_auth(&auth).unwrap());
+    }
+
+    #[test]
+    fn auth_tampered_fails_verification() {
+        let (signer, _) = MandateSigner::generate();
+        let mut auth = crate::purchase_auth::PurchaseAuth::new(
+            uuid::Uuid::new_v4(),
+            12_990,
+            "INR",
+            "prod-001",
+            "electronics",
+        );
+        signer.sign_auth(&mut auth).unwrap();
+
+        auth.amount = auth.amount + 1; // tamper after signing
+
+        assert!(!signer.verify_auth(&auth).unwrap());
+    }
+
+    #[test]
+    fn auth_wrong_key_fails_verification() {
+        let (signer_a, _) = MandateSigner::generate();
+        let (signer_b, _) = MandateSigner::generate();
+        let mut auth = crate::purchase_auth::PurchaseAuth::new(
+            uuid::Uuid::new_v4(),
+            12_990,
+            "INR",
+            "prod-001",
+            "electronics",
+        );
+        signer_a.sign_auth(&mut auth).unwrap();
+
+        assert!(!signer_b.verify_auth(&auth).unwrap());
     }
 }
