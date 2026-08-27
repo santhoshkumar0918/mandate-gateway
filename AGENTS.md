@@ -10,10 +10,36 @@ touching any code. If a task doesn't clearly belong to one subagent
 below, ask before proceeding rather than guessing.
 
 ---
-Before doing anything else, read `ANCHOR.md` in the repo root — it
-holds current project state (what's done, what's in progress, what's
-blocked). This file (AGENTS.md) holds the rules; ANCHOR.md holds
-where things stand right now.
+## 0. The state contract — read at start, update at end (never lose context)
+
+**`ANCHOR.md` in the repo root is the single source of "where are we
+right now".** It is how we keep context across sessions so work is never
+re-derived or lost. Every agent — builder or support — must obey:
+
+1. **Read `ANCHOR.md` before writing a single line of code, and read
+   it again whenever you feel lost or unclear on context.** This file
+   (AGENTS.md) holds *rules*; ANCHOR.md holds *state*. If state and
+   this file ever disagree, trust ANCHOR.md for what's done/in-progress
+   and this file for how to work.
+2. **Treat ANCHOR.md as the handoff to the next session.** Assume a
+   completely fresh agent will pick up only from ANCHOR.md. If you
+   finish a chunk of work and a fresh agent couldn't resume it from
+   ANCHOR.md alone, you haven't finished.
+3. **Update ANCHOR.md before you consider a session/task complete** —
+   update "Last completed", "In progress right now" (clear it), and
+   "Next task" to what a fresh agent should do next. Make entries
+   specific and verifiable (commit hashes, exact file paths), not vague
+   ("worked on things"). Never leave placeholder `<...>` text in it.
+4. **Keep it current, not retro.** Update it as you complete meaningful
+   chunks in a session, not only at the very end — a crash mid-session
+   must not lose the state you'd already made.
+5. **Never work blind.** If you can't reconcile the task with what
+   ANCHOR.md says is done/in-progress, stop and flag it (see
+   section 9) — do not guess and silently redo or overwrite work.
+
+This is not paperwork; it is the mechanism that lets a fresh agent
+(researcher, an external AI, you next week) resume exactly where things
+stand with zero context loss.
 
 ## 1. What this project is
 
@@ -92,8 +118,10 @@ don't own a directory of their own.
 
 Every builder-agent task follows the same closing sequence:
 **implement → (if stuck: `research-agent`) → `code-review-agent` →
-`git-commit-agent`.** No task is "done" until it's passed through
-review and been committed — see sections 9 and 10.
+`git-commit-agent` → update `ANCHOR.md`.** No task is "done" until it's
+passed through review, been committed, and ANCHOR.md reflects the new
+state (section 0). The ANCHOR update is part of done, not an afterthought
+— its commit is the handoff a fresh agent resumes from.
 
 ```
 catalog-manifest-agent ──┐
@@ -120,6 +148,9 @@ mandate-crypto-agent ──> policy-engine-agent ──> razorpay-gateway-agent
               │
               ▼
         git-commit-agent
+              │
+              ▼
+        update ANCHOR.md (state file)
 ```
 
 **Builder agents:**
@@ -205,6 +236,9 @@ A component is not done until:
 4. It's referenced correctly in `docker-compose.yml` if it's a
    service.
 5. No secret or key material is hardcoded or logged.
+6. `ANCHOR.md` has been updated to reflect the new state (section 0)
+   — a component is not "done" if the next session can't resume from
+   ANCHOR.md.
 
 ## 8. How to invoke a subagent
 
