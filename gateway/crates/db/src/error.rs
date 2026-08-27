@@ -12,6 +12,9 @@ pub enum DbError {
     #[error("serialization error: {0}")]
     Serialization(String),
 
+    #[error("crypto error: {0}")]
+    Crypto(String),
+
     #[error("mandate not found: {0}")]
     NotFound(String),
 

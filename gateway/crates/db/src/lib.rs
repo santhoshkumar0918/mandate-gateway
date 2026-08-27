@@ -1,6 +1,7 @@
 pub mod audit_repo;
 pub mod error;
 pub mod intent_repo;
+pub mod keychain_repo;
 pub mod mandate_repo;
 pub mod mismatch_repo;
 pub mod order_repo;

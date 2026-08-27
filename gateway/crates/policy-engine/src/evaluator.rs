@@ -281,7 +281,7 @@ mod tests {
         let (signer, mandate) = setup();
         let evaluator = PolicyEvaluator::new(&signer);
         let mut auth = signed_auth(&signer, &mandate, 30_000, "electronics");
-        auth.amount = auth.amount + 1; // tamper after signing
+        auth.amount += 1; // tamper after signing
         let decision = evaluator.evaluate(&mandate, &auth);
         assert!(matches!(decision, Decision::Block { reason: BlockReason::ReplayDetected, .. }));
     }

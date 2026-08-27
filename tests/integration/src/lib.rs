@@ -8,6 +8,10 @@ mod tests {
     use mandate_engine::purchase_auth::PurchaseAuth;
     use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
     use policy_engine::{Decision, DecisionKind, PolicyEvaluator};
+    use reconciliation::{
+        Intent, IssuedRefund, MismatchDetector, MismatchKind, Outcome, ReconcileService,
+        RefundProvider,
+    };
 
 
 /// Counts refund calls so tests can assert idempotency — a double refund is
@@ -312,4 +316,84 @@ async fn reconciliation_is_idempotent_no_double_refund() {
         "idempotency violated: double refund issued"
     );
 }
+}
+
+/// DB-backed test proving the signing-key persistence invariant: a key
+/// written once is reloaded unchanged on a simulated restart, so a mandate
+/// signed before the restart still verifies afterwards. Requires a migrated
+/// Postgres reachable via `DATABASE_URL`.
+#[cfg(test)]
+mod db_keychain_tests {
+    use mandate_engine::{Mandate, MandateSigner, NewMandate, Frequency};
+    use chrono::Utc;
+    use db::keychain_repo::KeychainRepo;
+
+    async fn pool() -> db::PgPool {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://santhoshkumar0918@localhost:5432/mandate_gateway".into());
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .expect("test database must be running and migrated")
+    }
+
+    #[tokio::test]
+    async fn load_or_create_with_restart() {
+        let pool = pool().await;
+        let repo = KeychainRepo::new(pool.clone());
+
+        // Clear any prior active row so the test is deterministic.
+        sqlx::query("DELETE FROM keychain WHERE id='active'")
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let secret = b"integration-test-master-secret";
+
+        // First boot: persist fresh key A.
+        let key_a = repo
+            .load_or_create(secret, [0xAA; 32], "key-id-A")
+            .await
+            .unwrap();
+        assert_eq!(key_a, [0xAA; 32]);
+
+        // Sign a mandate with A.
+        let signer_a = MandateSigner::from_key_bytes(key_a);
+        let mut mandate = Mandate::new(NewMandate {
+            user_id: "user-1".into(),
+            merchant_id: "merchant-1".into(),
+            buyer_agent_id: "agent-1".into(),
+            max_amount: 50_000,
+            currency: "INR".into(),
+            scope: vec!["electronics".into()],
+            frequency: Frequency::OneTime,
+            expires_at: Utc::now() + chrono::Duration::hours(1),
+        });
+        signer_a.sign(&mut mandate).unwrap();
+        assert!(signer_a.verify(&mandate).unwrap());
+
+        // Simulated restart: try to persist a *different* fresh key B.
+        let key_reloaded = repo
+            .load_or_create(secret, [0xBB; 32], "key-id-B")
+            .await
+            .unwrap();
+        assert_eq!(
+            key_reloaded, key_a,
+            "restart must reuse the persisted key, not a freshly generated one"
+        );
+
+        // A mandate signed before the restart must still verify.
+        let signer_reloaded = MandateSigner::from_key_bytes(key_reloaded);
+        assert!(
+            signer_reloaded.verify(&mandate).unwrap(),
+            "pre-restart mandate must remain verifiable after key reload"
+        );
+
+        // Cleanup so subsequent runs stay deterministic.
+        sqlx::query("DELETE FROM keychain WHERE id='active'")
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }

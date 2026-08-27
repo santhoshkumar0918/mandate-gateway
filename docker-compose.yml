@@ -26,6 +26,7 @@ services:
       DATABASE_URL: postgres://gateway:gateway_dev@postgres:5432/mandate_gateway
       RAZORPAY_KEY_ID: ${RAZORPAY_KEY_ID}
       RAZORPAY_KEY_SECRET: ${RAZORPAY_KEY_SECRET}
+      MANDATE_MASTER_KEY: ${MANDATE_MASTER_KEY}
     depends_on:
       postgres:
         condition: service_healthy

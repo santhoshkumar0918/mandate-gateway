@@ -26,6 +26,15 @@ impl MandateSigner {
         Self { signing_key }
     }
 
+    /// Restores a signer from the raw 32-byte Ed25519 signing key.
+    ///
+    /// This is how the gateway brings back a persisted signing key after a
+    /// restart. Using the same key means mandates issued before the restart
+    /// still verify — never regenerate a throwaway key.
+    pub fn from_key_bytes(bytes: [u8; 32]) -> Self {
+        Self::new(SigningKey::from_bytes(&bytes))
+    }
+
     /// Creates a new signer with a freshly generated keypair.
     ///
     /// The returned [`SigningKey`] must be persisted securely — losing it
@@ -167,6 +176,24 @@ mod tests {
     }
 
     #[test]
+    fn from_key_bytes_reuses_same_key() {
+        let (signer_a, key) = MandateSigner::generate();
+        let raw = key.to_bytes();
+
+        // Rebuild a signer from the same raw bytes — simulates a gateway
+        // that persisted the key and reloaded it after a restart.
+        let signer_rebuilt = MandateSigner::from_key_bytes(raw);
+
+        let mut mandate = test_mandate();
+        signer_a.sign(&mut mandate).unwrap();
+
+        // A mandate signed by the original signer must verifies under the
+        // rebuilt signer — same key, so the invariant it upholds is that a
+        // pre-restart mandate stays verifiable after reload.
+        assert!(signer_rebuilt.verify(&mandate).unwrap());
+    }
+
+    #[test]
     fn tampered_mandate_fails_verification() {
         let (signer, _) = MandateSigner::generate();
         let mut mandate = test_mandate();
@@ -228,7 +255,7 @@ mod tests {
         );
         signer.sign_auth(&mut auth).unwrap();
 
-        auth.amount = auth.amount + 1; // tamper after signing
+        auth.amount += 1; // tamper after signing
 
         assert!(!signer.verify_auth(&auth).unwrap());
     }

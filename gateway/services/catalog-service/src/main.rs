@@ -481,7 +481,7 @@ fn sample_manifest() -> MerchantManifest {
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 #[tokio::main]
-async fn main() {
+async fn main() -> Result<(), Box<dyn std::error::Error>> {
     tracing_subscriber::fmt()
         .with_env_filter(EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
         .init();
@@ -498,7 +498,23 @@ async fn main() {
     let key_id = std::env::var("RAZORPAY_KEY_ID").unwrap_or_default();
     let key_secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
 
-    let (signer, _signing_key) = MandateSigner::generate();
+    // ---- Signing-key persistence at rest ---------------------------------
+    // The Ed25519 signing key must survive restarts, otherwise every
+    // previously issued mandate becomes unverifiable. We generate once,
+    // encrypt it at rest via the keychain (AES-GCM under a master secret
+    // from env), and reload the same key on every subsequent boot. The
+    // master secret never touches the database or git.
+    let master_secret = std::env::var("MANDATE_MASTER_KEY")?;
+    let keychain = db::keychain_repo::KeychainRepo::new(db.clone());
+
+    let (_candidate, fresh_key) = MandateSigner::generate();
+    let key_id_hex = hex::encode(fresh_key.verifying_key().to_bytes());
+    let persisted_key = keychain
+        .load_or_create(master_secret.as_bytes(), fresh_key.to_bytes(), &key_id_hex)
+        .await
+        .map_err(|e| format!("failed to load/store signing keychain: {e}"))?;
+    let signer = Arc::new(MandateSigner::from_key_bytes(persisted_key));
+
     let razorpay = RazorpayClient::new(&key_id, &key_secret);
 
     let catalog = CatalogStore::new();
@@ -506,7 +522,7 @@ async fn main() {
 
     let state = AppState {
         db,
-        signer: Arc::new(signer),
+        signer,
         razorpay: Arc::new(razorpay),
         catalog,
         reconcile,
@@ -524,9 +540,14 @@ async fn main() {
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
-    let addr = SocketAddr::from(([0, 0, 0, 0], 8000));
+    let port: u16 = std::env::var("PORT")
+        .ok()
+        .and_then(|p| p.parse().ok())
+        .unwrap_or(8000);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
     tracing::info!("gateway listening on {}", addr);
 
-    let listener = tokio::net::TcpListener::bind(addr).await.unwrap();
-    axum::serve(listener, app).await.unwrap();
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    axum::serve(listener, app).await?;
+    Ok(())
 }
