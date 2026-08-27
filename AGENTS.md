@@ -10,6 +10,10 @@ touching any code. If a task doesn't clearly belong to one subagent
 below, ask before proceeding rather than guessing.
 
 ---
+Before doing anything else, read `ANCHOR.md` in the repo root — it
+holds current project state (what's done, what's in progress, what's
+blocked). This file (AGENTS.md) holds the rules; ANCHOR.md holds
+where things stand right now.
 
 ## 1. What this project is
 
