@@ -12,6 +12,9 @@ pub enum ReconciliationError {
     #[error("refund API error: {0}")]
     RefundFailed(String),
 
+    #[error("database error: {0}")]
+    Db(#[from] db::DbError),
+
     #[error("serialization error: {0}")]
     Serialization(#[from] serde_json::Error),
 }

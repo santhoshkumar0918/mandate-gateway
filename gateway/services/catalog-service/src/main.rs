@@ -9,6 +9,7 @@ use db::{PgNonceChecker, PgPool};
 use mandate_engine::{Frequency, MandateSigner, NewMandate};
 use policy_engine::PolicyEvaluator;
 use razorpay_client::RazorpayClient;
+use reconciliation::{RazorpayRefundProvider, ReconcileService};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
 use std::{net::SocketAddr, sync::Arc};
@@ -16,8 +17,10 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
+mod catalog_store;
 mod manifest;
-use manifest::{Availability, MerchantManifest, Product};
+use catalog_store::CatalogStore;
+use manifest::{MerchantManifest, Product};
 
 // ─── App State ────────────────────────────────────────────────────────────
 
@@ -27,6 +30,8 @@ struct AppState {
     signer: Arc<MandateSigner>,
     nonce_checker: Arc<PgNonceChecker>,
     razorpay: Arc<RazorpayClient>,
+    catalog: CatalogStore,
+    reconcile: ReconcileService<RazorpayRefundProvider>,
 }
 
 // ─── Request / Response Types ─────────────────────────────────────────────
@@ -57,6 +62,10 @@ struct PurchaseRequest {
     product_id: String,
     quantity: i64,
     shipping_address: String,
+    /// The price the buyer agent saw when it selected the product (paise).
+    /// Reconciliation charges the live catalog price and compares it against
+    /// this expected price to detect drift.
+    expected_price: i64,
 }
 
 #[derive(Serialize)]
@@ -101,14 +110,53 @@ struct RevokeMandateResponse {
     status: String,
 }
 
+#[derive(Deserialize)]
+struct SimulateDriftBody {
+    product_id: String,
+    new_price: i64,
+}
+
+#[derive(Serialize)]
+struct SimulateDriftResponse {
+    product_id: String,
+    old_price: Option<i64>,
+    new_price: i64,
+    message: String,
+}
+
 // ─── Handlers ─────────────────────────────────────────────────────────────
 
 async fn get_manifest() -> Json<MerchantManifest> {
     Json(sample_manifest())
 }
 
-async fn get_catalog() -> Json<Vec<Product>> {
-    Json(sample_catalog())
+async fn get_catalog(State(state): State<AppState>) -> Json<Vec<Product>> {
+    Json(state.catalog.list())
+}
+
+/// Simulates catalog price drift for the engineered failure scenario.
+///
+/// Bumps a product's price so a subsequent purchase charges a different
+/// amount than what the buyer agent intended, triggering reconciliation.
+async fn simulate_drift(
+    State(state): State<AppState>,
+    Json(body): Json<SimulateDriftBody>,
+) -> Result<Json<SimulateDriftResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let old_price = state.catalog.get(&body.product_id).map(|p| p.price);
+    let updated = state
+        .catalog
+        .set_price(&body.product_id, body.new_price)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
+
+    Ok(Json(SimulateDriftResponse {
+        product_id: updated.product_id.clone(),
+        old_price,
+        new_price: updated.price,
+        message: format!(
+            "catalog price for {} drifted from {:?} to {}",
+            updated.product_id, old_price, updated.price
+        ),
+    }))
 }
 
 async fn issue_mandate(
@@ -147,7 +195,7 @@ async fn issue_mandate(
         event_type: "mandate_issued",
         mandate_id: Some(mandate.mandate_id),
         entity_id: &mandate.mandate_id.to_string(),
-        decision: "allowed",
+        decision: "allow",
         reason: None,
         detail: Some(serde_json::json!({
             "max_amount": mandate.max_amount,
@@ -178,16 +226,24 @@ async fn execute_purchase(
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
 
     // 2. Policy evaluation (nonce check + signature + expiry + budget + scope)
+    let product = state
+        .catalog
+        .get(&body.product_id)
+        .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
+
+    // The expected price is what the product costs in the catalog the moment
+    // the purchase executes. If a drift was simulated, this is the drifted
+    // price. The Intent (recorded lower) holds what the agent intended.
+    let order_amount = product.price * body.quantity;
     let evaluator = PolicyEvaluator::new(&state.signer, &*state.nonce_checker);
-    let order_amount = body.quantity * 129_900; // simplified
-    let category = mandate.scope.first().map(|s| s.as_str()).unwrap_or("unknown");
+    let category = &product.category;
     let decision = evaluator.evaluate(&mandate, order_amount, category);
 
     // 3. Audit the decision
     let (decision_str, reason_str) = match &decision {
-        policy_engine::Decision::Allow { .. } => ("allowed", None),
-        policy_engine::Decision::Block { reason, detail } => ("blocked", Some(format!("{:?}: {}", reason, detail))),
-        policy_engine::Decision::Escalate { reason, rule } => ("escalated", Some(format!("{}: {}", reason, rule))),
+        policy_engine::Decision::Allow { .. } => ("allow", None),
+        policy_engine::Decision::Block { reason, detail } => ("block", Some(format!("{:?}: {}", reason, detail))),
+        policy_engine::Decision::Escalate { reason, rule } => ("escalate", Some(format!("{}: {}", reason, rule))),
     };
 
     db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
@@ -219,7 +275,7 @@ async fn execute_purchase(
         event_type: "budget_debited",
         mandate_id: Some(mandate.mandate_id),
         entity_id: &mandate.mandate_id.to_string(),
-        decision: "allowed",
+        decision: "allow",
         reason: None,
         detail: Some(serde_json::json!({
             "amount_debited": order_amount,
@@ -229,19 +285,23 @@ async fn execute_purchase(
         actor: &mandate.buyer_agent_id,
     }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 7. Record intent
+    // 7. Record intent — what the agent intended (the price it saw when it
+    //    selected the product). Reconciliation compares this against the
+    //    price actually charged to detect drift.
     let intent_id = Uuid::new_v4();
+    let expected_price = body.expected_price * body.quantity;
     db::intent_repo::insert(&state.db, intent_id, mandate.mandate_id,
-        &body.product_id, category, order_amount, &mandate.currency).await
+        &body.product_id, category, expected_price, &mandate.currency).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 8. Create order via Razorpay
+    // 8. Create order via Razorpay at the live (possibly drifted) price
+    let receipt = mandate.mandate_id.to_string();
     let order = state.razorpay.create_order(
-        order_amount, &mandate.currency, Some(&mandate.mandate_id.to_string()),
+        order_amount, &mandate.currency, Some(&receipt),
     ).await.map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
 
     db::order_repo::insert(&state.db, &order.id, mandate.mandate_id,
-        order_amount, &mandate.currency, &order.status, Some(&mandate.mandate_id.to_string())).await
+        order_amount, &mandate.currency, &order.status, Some(&receipt)).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     // 9. Audit: order created
@@ -249,11 +309,35 @@ async fn execute_purchase(
         event_type: "order_created",
         mandate_id: Some(mandate.mandate_id),
         entity_id: &order.id,
-        decision: "allowed",
+        decision: "allow",
         reason: None,
         detail: Some(serde_json::json!({ "amount": order_amount })),
         actor: &mandate.buyer_agent_id,
     }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 10. Reconcile: compare the intent (expected price) against the actual
+    //     outcome (the order we just charged). Detects catalog drift and
+    //     triggers recovery if the prices diverge.
+    let outcome = reconciliation::Outcome {
+        order_id: order.id.clone(),
+        payment_id: String::new(), // no captured payment in this flow
+        product_id: body.product_id.clone(),
+        actual_price: order_amount,
+        currency: mandate.currency.clone(),
+        completed_at: Utc::now(),
+    };
+    let intent = reconciliation::Intent {
+        intent_id,
+        mandate_id: mandate.mandate_id,
+        product_id: body.product_id.clone(),
+        category: category.clone(),
+        expected_price,
+        currency: mandate.currency.clone(),
+        created_at: Utc::now(),
+    };
+
+    state.reconcile.reconcile_purchase(&intent, &outcome, &mandate.buyer_agent_id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     Ok((
         StatusCode::CREATED,
@@ -284,7 +368,7 @@ async fn revoke_mandate(
         event_type: "mandate_revoked",
         mandate_id: Some(mandate.mandate_id),
         entity_id: &mandate.mandate_id.to_string(),
-        decision: "allowed",
+        decision: "allow",
         reason: body.reason.as_deref(),
         detail: Some(serde_json::json!({
             "previous_status": "active",
@@ -333,39 +417,6 @@ fn sample_manifest() -> MerchantManifest {
     }
 }
 
-fn sample_catalog() -> Vec<Product> {
-    vec![
-        Product {
-            product_id: "prod-001".into(),
-            offer_id: "off-001".into(),
-            title: "Wireless Mouse".into(),
-            description: "Ergonomic wireless mouse with USB-C receiver".into(),
-            category: "electronics".into(),
-            price: 129_900,
-            currency: "INR".into(),
-            availability: Availability::InStock,
-            inventory_count: 50,
-            seller_name: "TechStore Demo".into(),
-            seller_id: "merchant-001".into(),
-            updated_at: Utc::now(),
-        },
-        Product {
-            product_id: "prod-002".into(),
-            offer_id: "off-002".into(),
-            title: "USB-C Hub 7-in-1".into(),
-            description: "HDMI, USB-A x3, SD, microSD, USB-C PD".into(),
-            category: "accessories".into(),
-            price: 249_900,
-            currency: "INR".into(),
-            availability: Availability::InStock,
-            inventory_count: 30,
-            seller_name: "TechStore Demo".into(),
-            seller_id: "merchant-001".into(),
-            updated_at: Utc::now(),
-        },
-    ]
-}
-
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -390,11 +441,16 @@ async fn main() {
     let razorpay = RazorpayClient::new(&key_id, &key_secret);
     let nonce_checker = PgNonceChecker::new(db.clone());
 
+    let catalog = CatalogStore::new();
+    let reconcile = ReconcileService::new(db.clone(), RazorpayRefundProvider(razorpay.clone()));
+
     let state = AppState {
         db,
         signer: Arc::new(signer),
         nonce_checker: Arc::new(nonce_checker),
         razorpay: Arc::new(razorpay),
+        catalog,
+        reconcile,
     };
 
     let app = Router::new()
@@ -404,6 +460,7 @@ async fn main() {
         .route("/purchase", post(execute_purchase))
         .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit/{mandate_id}", get(get_audit_trail))
+        .route("/admin/simulate-drift", post(simulate_drift))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 

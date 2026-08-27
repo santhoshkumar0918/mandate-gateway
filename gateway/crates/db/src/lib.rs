@@ -5,6 +5,7 @@ pub mod mandate_repo;
 pub mod mismatch_repo;
 pub mod order_repo;
 pub mod payment_repo;
+pub mod reconcile;
 pub mod refund_repo;
 
 pub use error::DbError;

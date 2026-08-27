@@ -13,8 +13,12 @@
 
 pub mod error;
 pub mod matcher;
+pub mod refund_provider;
+pub mod service;
 pub mod types;
 
 pub use error::ReconciliationError;
 pub use matcher::MismatchDetector;
+pub use refund_provider::{IssuedRefund, RazorpayRefundProvider, RefundProvider};
+pub use service::ReconcileService;
 pub use types::{Intent, Mismatch, MismatchKind, MismatchStatus, Outcome};

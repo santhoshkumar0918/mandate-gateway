@@ -9,12 +9,21 @@ use crate::error::DbError;
 /// The audit log is immutable — there are no update or delete methods.
 /// Every money-moving action writes an entry here before it's considered
 /// complete. This is the "explainable" guarantee.
-///
-/// # Arguments
-///
-/// * `pool` - Database connection pool
-/// * `params` - Audit log entry parameters
 pub async fn append(pool: &PgPool, params: &AuditParams<'_>) -> Result<(), DbError> {
+    let mut tx = pool.begin().await?;
+    append_tx(&mut tx, params).await?;
+    tx.commit().await?;
+    Ok(())
+}
+
+/// Appends an audit entry using an existing transaction.
+///
+/// Lets a caller write an audit entry in the same transaction as the
+/// money-moving action it records, so the two cannot diverge on a crash.
+pub async fn append_tx(
+    tx: &mut sqlx::Transaction<'_, sqlx::Postgres>,
+    params: &AuditParams<'_>,
+) -> Result<(), DbError> {
     sqlx::query(
         r#"INSERT INTO audit_log
             (event_type, mandate_id, entity_id, decision, reason, detail, actor)
@@ -27,7 +36,7 @@ pub async fn append(pool: &PgPool, params: &AuditParams<'_>) -> Result<(), DbErr
     .bind(params.reason)
     .bind(params.detail.clone())
     .bind(params.actor)
-    .execute(pool)
+    .execute(&mut **tx)
     .await?;
 
     Ok(())

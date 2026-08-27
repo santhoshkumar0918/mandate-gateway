@@ -5,6 +5,7 @@ use crate::types::{ApiErrorResponse, Order, Payment, Refund};
 
 const BASE_URL: &str = "https://api.razorpay.com/v1";
 
+#[derive(Clone)]
 pub struct RazorpayClient {
     client: Client,
     auth_header: String,
