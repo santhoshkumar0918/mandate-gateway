@@ -42,15 +42,31 @@ services:
     depends_on:
       - gateway
 
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
   buyer-agent:
     build:
       context: ./buyer-agent
     environment:
       GATEWAY_URL: http://gateway:8000
+      REDIS_URL: redis://redis:6379
+      AGENT_QUEUE: agent:tasks
       BUDGET: "50000"
       CATEGORY: "electronics"
+      AGENT_EMAIL: agent-001@buyer.local
+      AGENT_TENANT: agent-001
+      AGENT_PASSWORD: buyer-agent-secret
     depends_on:
       - gateway
+      - redis
 
 volumes:
   pgdata:
