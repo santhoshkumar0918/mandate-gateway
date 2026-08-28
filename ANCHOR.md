@@ -52,6 +52,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       served 8 products + persisted manifest from Postgres.
     - **Done — ticket file `docs/product-backlog/issues/02-*.md` deleted.**
 
+0.7. **Ticket 03 — auth service (roles + sessions + RBAC gate)** (`ebf0fda`,
+    `2b8efb6`, `900d17f`, `e5f66f6`):
+    - Migration `005_accounts.sql`: `accounts` table (role merchant/agent/admin,
+      argon2id password_hash, tenant_id). JWT_SECRET + MANDATE_MASTER_KEY in
+      `.env.example` + compose.
+    - `db::auth_repo`: create_account (argon2id) + verify_password.
+    - `auth.rs`: HS256 JWT issue/verify + `AuthUser` axum extractor (401 on
+      missing/invalid token). Handlers: `POST /auth/signup`, `/auth/login`,
+      `GET /auth/me` (protected).
+    - Test `db_auth_tests::account_signup_and_password_verify` passes; live flow
+      verified (signup→token→/me 200, no-token→401, login works).
+    - NOTE: money endpoints not yet gated — that lands with ticket 04 (agent
+      API keys) + ticket 06/09 (merchant/agent console scoping).
+    - **Done — ticket file `docs/product-backlog/issues/03-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -99,16 +114,15 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-12 remaining tracer-bullet vertical slices, blockers declared. Work the
-frontier (no unblocked peers): **03 (auth-service)** is now unblocked
-(01 + 02 are both DONE). Full remaining chain: 04←03; 05←03; 06←{02,03,05};
-07←{03,05}; 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
-14←{05,06,07}.
+11 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **04 (agent API keys)** is now unblocked (01 + 02 + 03 DONE).
+Full remaining chain: 05←03; 06←{02,03,05}; 07←{03,05}; 08←04; 09←{04,07};
+10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
-3. `03-auth-service` — merchant/agent/admin signup+login, JWT sessions, RBAC.
-   No blockers. (NEXT.)
+3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
+4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -123,7 +137,8 @@ frontier (no unblocked peers): **03 (auth-service)** is now unblocked
 
 ## In progress right now
 
-Ticket **03: auth-service (merchant/agent/admin signup + login, JWT sessions, RBAC)** — unblocked now that 01 and 02 are done.
+Ticket **04: agent API keys (scoped credentials, rotation, revoke)** — unblocked now
+that 01, 02, 03 are done.
 
 ## Blocked / waiting on
 
