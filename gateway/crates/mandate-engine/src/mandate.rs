@@ -117,8 +117,6 @@ impl Mandate {
     pub fn signing_payload(&self) -> Result<Vec<u8>, serde_json::Error> {
         let payload = SigningPayload {
             mandate_id: self.mandate_id,
-            issued_at: self.issued_at,
-            expires_at: self.expires_at,
             user_id: &self.user_id,
             merchant_id: &self.merchant_id,
             buyer_agent_id: &self.buyer_agent_id,
@@ -143,12 +141,13 @@ impl Mandate {
 ///
 /// Excludes `signature` itself — signing the signature would be circular.
 /// Excludes mutable lifecycle fields (`spent_amount`, `status`, `nonce`)
-/// — the signature must remain valid across the mandate's entire lifecycle.
+/// and the timestamps (`issued_at`, `expires_at`): Postgres `timestamptz`
+/// truncates sub-microsecond precision, so including them would break
+/// verification after a database round-trip. Expiry is enforced separately
+/// by [`Mandate::is_usable`], not by the signature.
 #[derive(Serialize)]
 struct SigningPayload<'a> {
     mandate_id: Uuid,
-    issued_at: DateTime<Utc>,
-    expires_at: DateTime<Utc>,
     user_id: &'a str,
     merchant_id: &'a str,
     buyer_agent_id: &'a str,
