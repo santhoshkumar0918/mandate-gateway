@@ -67,6 +67,22 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       API keys) + ticket 06/09 (merchant/agent console scoping).
     - **Done — ticket file `docs/product-backlog/issues/03-*.md` deleted.**
 
+0.8. **Ticket 04 — agent API keys (scoped credentials, rotation, revoke)** (`54ee66b`,
+    `cf2c9f0`, `955d680`, `17f5d6d`, `f52dd83`):
+    - Migration `006_api_keys.sql` (key_id, account_id FK, sha256 key_hash,
+      scopes JSONB, tenant_id, revoked, last_used_at).
+    - `db::api_key_repo`: create_key (generates `magw_`+32B, stores hash only),
+      verify_key (hashes, updates last_used_at, rejects revoked), revoke, list.
+    - `auth.rs`/`main.rs`: `ApiKey` axum extractor (Bearer `magw_…`); handlers
+      `POST/GET /agents/keys`, `DELETE /agents/keys/{id}`; `issue_mandate` +
+      `execute_purchase` now require `ApiKey` and scope-check (`mandate:issue`,
+      `purchase:exec`). `buyer_agent_id` derived from key tenant_id.
+    - Buyer-agent rewritten to sign up → issue scoped key → key-auth every
+      money call.
+    - Live verified: full keyed purchase (Razorpay order created); no-key→401,
+      revoked key→401, wrong-scope→403. Test `api_key_create_verify_revoke` passes.
+    - **Done — ticket file `docs/product-backlog/issues/04-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -114,15 +130,16 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-11 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **04 (agent API keys)** is now unblocked (01 + 02 + 03 DONE).
-Full remaining chain: 05←03; 06←{02,03,05}; 07←{03,05}; 08←04; 09←{04,07};
+10 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **05 (web-app shell + design system)** is now unblocked (03 DONE; 04
+also DONE). Full remaining chain: 06←{02,03,05}; 07←{03,05}; 08←04; 09←{04,07};
 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
 3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
-4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke. No blockers. (NEXT.)
+4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
+5. `05-web-app-shell-design-system` — product web app shell + design system. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -137,8 +154,8 @@ Full remaining chain: 05←03; 06←{02,03,05}; 07←{03,05}; 08←04; 09←{04,
 
 ## In progress right now
 
-Ticket **04: agent API keys (scoped credentials, rotation, revoke)** — unblocked now
-that 01, 02, 03 are done.
+Ticket **05: web-app shell + design system (auth → dashboard)** — unblocked now
+that 01, 02, 03, 04 are done.
 
 ## Blocked / waiting on
 
