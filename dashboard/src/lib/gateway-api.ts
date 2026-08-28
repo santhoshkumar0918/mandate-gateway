@@ -213,6 +213,31 @@ export async function updateCatalogPrice(
   return res.json();
 }
 
+export interface AuditFeedEntry {
+  mandate_id: string;
+  event_type: string;
+  entity_id: string;
+  decision: string;
+  reason: string | null;
+  detail: Record<string, unknown> | null;
+  actor: string;
+  created_at: string;
+}
+
+export async function getAuditFeed(
+  token: string,
+  params: { mandate_id?: string; event_type?: string; decision?: string; limit?: number } = {},
+): Promise<AuditFeedEntry[]> {
+  const url = new URL(`${GATEWAY_URL}/audit`);
+  if (params.mandate_id) url.searchParams.set("mandate_id", params.mandate_id);
+  if (params.event_type) url.searchParams.set("event_type", params.event_type);
+  if (params.decision) url.searchParams.set("decision", params.decision);
+  if (params.limit) url.searchParams.set("limit", String(params.limit));
+  const res = await fetch(url, { headers: authHeader(token), cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load audit feed: ${res.status}`);
+  return res.json();
+}
+
 // ─── Audit ───────────────────────────────────────────────────────────────
 
 export async function fetchAuditTrail(
