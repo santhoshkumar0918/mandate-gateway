@@ -298,10 +298,32 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Nothing — the 14-ticket product backlog is complete and committed. Next
-possible work (not yet ticketed): production deploy target (Render/Fly),
-load/soak testing of the continuous agent, multi-merchant isolation, and a
-recorded demo video.
+Demo-readiness + UX polish pass (post-backlog, user-requested for judges):
+- DONE: Added `scripts/seed_demo.py` (idempotent) that creates a demo merchant
+  mapped to `merchant-001` (the live catalog owner) + a demo admin + a scoped
+  agent key + one immediate purchase + a reconciliation mismatch. Run AFTER
+  `docker compose up`: `python3 scripts/seed_demo.py`.
+- DONE: Login page shows a "Live demo unlocked" banner with
+  `demo@merchant.local` / `Demo@1234` (merchant) and `admin@merchant.local` /
+  `Admin@1234` (admin).
+- DONE: Landing page redesigned (premium dark fintech, green shades, hero
+  mandate card, how-it-works, live-agent showcase, security section, CTA).
+- DONE: AppShell nav upgraded with SVG icons (no emoji), grouped Store /
+  Platform, live "signed in" indicator, "Try demo" link.
+- DONE: Dashboard Overview now shows KPI cards (live products, active mandates,
+  purchases 24h, blocked, catalog value) + a live agent-activity feed + a
+  getting-started panel for empty stores.
+- DONE: Pagination added to catalog / mandates / audit / agents-activity /
+  reconciliation.
+- DONE: Frontend event types aligned to the REAL audit events
+  (`mandate_issued`, `purchase_attempt`, `order_created`, `budget_debited`,
+  `order_reconciled`) — earlier code referenced non-existent `payment.captured`
+  etc., so KPIs/feeds showed zero.
+- DONE: Gateway CORS layer added so the browser dashboard can call the gateway
+  cross-origin (`localhost:3000` → `localhost:8000`).
+- NOTE: each real merchant gets its own isolated tenant, so a freshly created
+  account starts EMPTY by design (correct product behavior). The demo accounts
+  are the populated showcase.
 
 ## Blocked / waiting on
 
@@ -313,14 +335,18 @@ Nothing is off-limits.
 
 ## Next task
 
-Work the backlog frontier. **Ticket 02 `02-catalog-merchants-postgres`
-(move catalog + merchants out of the in-memory `CatalogStore` into
-Postgres) is next and unblocked.** Work the frontier top-down per the
-blocking chain in the "Product tickets" section.
+Record a short demo video / write a one-page judge walkthrough: sign in as the
+demo merchant → watch Overview KPIs + live agent activity update → open
+Mandates/Audit/Reconciliation to see the gated purchases and the auto-recovered
+price-drift mismatch. Optionally enrich the catalog (add `007_catalog_extra.sql`
++ a product-create API) for a fuller Catalog page.
 
 Stack/completion notes for whoever resumes:
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
-  `bun run lint` + `bun run build` in `dashboard/`.
+  `npx tsc --noEmit` + `npx eslint src` in `dashboard/` (the
+  `react-hooks/set-state-in-effect` rule is downgraded to a warning because the
+  dashboard intentionally polls the gateway from client effects).
+- Demo runbook: `docker compose up` then `python3 scripts/seed_demo.py`.
 - Design system: read `docs/design-system/mandate-gateway/MASTER.md` before any
   frontend slice; check `pages/<page>.md` overrides first.
 - Models: use opencode/OpenRouter free models for any LLM intent-work, never
