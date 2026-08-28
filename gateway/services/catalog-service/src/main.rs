@@ -617,6 +617,41 @@ async fn list_audit(
     Ok(Json(items))
 }
 
+#[derive(Serialize)]
+struct MismatchResponse {
+    mismatch_id: Uuid,
+    mandate_id: Uuid,
+    intent_id: Uuid,
+    kind: serde_json::Value,
+    status: String,
+    refund_id: Option<String>,
+    detected_at: chrono::DateTime<Utc>,
+}
+
+/// Operator view of intent-vs-outcome mismatches (reconciliation).
+async fn list_mismatches(
+    auth::AuthUser(_): auth::AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<MismatchResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let rows = db::mismatch_repo::list_recent(&state.db, 100)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| MismatchResponse {
+            mismatch_id: r.mismatch_id,
+            mandate_id: r.mandate_id,
+            intent_id: r.intent_id,
+            kind: r.kind,
+            status: r.status,
+            refund_id: r.refund_id,
+            detected_at: r.detected_at,
+        })
+        .collect();
+    Ok(Json(items))
+}
+
 // ─── Auth handlers ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -929,6 +964,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit", get(list_audit))
         .route("/audit/{mandate_id}", get(get_audit_trail))
+        .route("/reconciliation/mismatches", get(list_mismatches))
         .route("/admin/simulate-drift", post(simulate_drift))
         .route("/auth/signup", post(signup))
         .route("/auth/login", post(login))

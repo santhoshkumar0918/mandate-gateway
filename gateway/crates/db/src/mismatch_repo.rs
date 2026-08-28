@@ -98,3 +98,14 @@ pub async fn find_by_id(
 
     Ok(row)
 }
+
+/// Recent mismatches, newest first (reconciliation operator view).
+pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<MismatchRow>, DbError> {
+    let rows = sqlx::query_as::<_, MismatchRow>(
+        "SELECT * FROM mismatches ORDER BY detected_at DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}
