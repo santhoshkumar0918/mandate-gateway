@@ -82,3 +82,15 @@ pub async fn find_by_mandate(
 
     Ok(rows)
 }
+
+/// Recent audit events across all mandates, newest first (operator feed).
+/// Callers filter further by `event_type`/`decision` as needed.
+pub async fn list_recent(pool: &PgPool, limit: i64) -> Result<Vec<AuditEntry>, DbError> {
+    let rows = sqlx::query_as::<_, AuditEntry>(
+        "SELECT * FROM audit_log ORDER BY created_at DESC LIMIT $1",
+    )
+    .bind(limit)
+    .fetch_all(pool)
+    .await?;
+    Ok(rows)
+}

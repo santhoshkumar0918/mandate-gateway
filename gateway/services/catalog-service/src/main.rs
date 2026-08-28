@@ -572,6 +572,51 @@ async fn get_audit_trail(
     }))
 }
 
+#[derive(Deserialize)]
+struct ListAuditQuery {
+    mandate_id: Option<String>,
+    event_type: Option<String>,
+    decision: Option<String>,
+    limit: Option<i64>,
+}
+
+/// Operator feed: recent audit events, optionally filtered. Powers the live
+/// audit stream in the dashboard.
+async fn list_audit(
+    auth::AuthUser(_): auth::AuthUser,
+    State(state): State<AppState>,
+    Query(params): Query<ListAuditQuery>,
+) -> Result<Json<Vec<AuditEntryResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let limit = params.limit.unwrap_or(200).clamp(1, 1000);
+    let mut rows = db::audit_repo::list_recent(&state.db, limit)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    if let Some(m) = &params.mandate_id {
+        rows.retain(|r| r.mandate_id.map(|u| u.to_string()).as_deref() == Some(m.as_str()));
+    }
+    if let Some(et) = &params.event_type {
+        rows.retain(|r| &r.event_type == et);
+    }
+    if let Some(d) = &params.decision {
+        rows.retain(|r| &r.decision == d);
+    }
+
+    let items = rows
+        .into_iter()
+        .map(|e| AuditEntryResponse {
+            event_type: e.event_type,
+            entity_id: e.entity_id,
+            decision: e.decision,
+            reason: e.reason,
+            detail: e.detail,
+            actor: e.actor,
+            created_at: e.created_at,
+        })
+        .collect();
+    Ok(Json(items))
+}
+
 // ─── Auth handlers ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -882,6 +927,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/mandate/{id}", get(get_mandate))
         .route("/purchase", post(execute_purchase))
         .route("/mandate/revoke", post(revoke_mandate))
+        .route("/audit", get(list_audit))
         .route("/audit/{mandate_id}", get(get_audit_trail))
         .route("/admin/simulate-drift", post(simulate_drift))
         .route("/auth/signup", post(signup))
