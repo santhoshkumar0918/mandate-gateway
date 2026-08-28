@@ -163,6 +163,16 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       engine + insert path already exist from the trust-engine phases.)
     - **Done — ticket file `docs/product-backlog/issues/10-*.md` deleted.**
 
+0.15. **Ticket 11 — gateway cache + rate-limit** (`69336b4`):
+    - `AppState` gained `catalog_cache: Arc<Mutex<Option<(Instant, rows)>>>` (10s TTL)
+      and `rate_limiter: Arc<Mutex<HashMap<key_id,(Instant,u64)>>>`. `get_catalog`
+      now serves via `get_cached_catalog` (TTL-bounded, cheaper under agent polling).
+      `check_rate_limit` enforces a 30/60s fixed window per API key on
+      `issue_mandate` + `execute_purchase` → `429 TOO_MANY_REQUESTS`.
+    - `cargo clippy -D warnings` clean; verified live: 35 mandate calls on one key
+      → 30 OK then 429; `/catalog` cached 200.
+    - **Done — ticket file `docs/product-backlog/issues/11-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -210,9 +220,9 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-4 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **11 (gateway cache + rate-limit)** is now unblocked (04 DONE). Full
-remaining chain: 12←{03,11}; 13←all; 14←{05,06,07}.
+ 3 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+ peers): **12 (admin console)** is now unblocked (03 + 11 DONE). Full remaining
+ chain: 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -224,7 +234,8 @@ remaining chain: 12←{03,11}; 13←all; 14←{05,06,07}.
 8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
 9. ~~`09-agent-console`~~ — **DONE** (`9ab66f2`), file deleted.
 10. ~~`10-reconciliation-ui-alerting`~~ — **DONE** (`9ec281e`+follow-ups), file deleted.
-11. `11-gateway-cache-ratelimit` — cache catalog/manifest, rate-limit money endpoints. No blockers. (NEXT.)
+11. ~~`11-gateway-cache-ratelimit`~~ — **DONE** (`69336b4`), file deleted.
+12. `12-admin-console-observability` — admin console + health/tracing. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -239,8 +250,8 @@ remaining chain: 12←{03,11}; 13←all; 14←{05,06,07}.
 
 ## In progress right now
 
-Ticket **11: gateway cache + rate-limit (resilience)** — unblocked now that 04
-is done.
+Ticket **12: admin console + observability** — unblocked now that 03 + 11 are
+done.
 
 ## Blocked / waiting on
 
