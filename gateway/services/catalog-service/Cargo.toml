@@ -24,3 +24,5 @@ reconciliation = { path = "../reconciliation" }
 db = { path = "../../crates/db" }
 sqlx = { version = "0.8", features = ["runtime-tokio", "tls-rustls", "postgres", "uuid", "chrono", "json"] }
 hex = "0.4"
+jsonwebtoken = "9"
+rand = "0.8"

@@ -19,6 +19,7 @@ use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
 mod manifest;
+mod auth;
 use manifest::{Availability, MerchantManifest, Product};
 
 // ─── App State ────────────────────────────────────────────────────────────
@@ -31,6 +32,7 @@ struct AppState {
     catalog: db::catalog_repo::CatalogRepo,
     merchant: db::merchant_repo::MerchantRepo,
     merchant_id: String,
+    jwt_secret: Vec<u8>,
     reconcile: ReconcileService<RazorpayRefundProvider>,
 }
 
@@ -494,6 +496,101 @@ async fn get_audit_trail(
     }))
 }
 
+// ─── Auth handlers ───────────────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct SignupBody {
+    role: String,        // "merchant" | "agent" | "admin"
+    email: String,
+    name: String,
+    password: String,
+    /// For merchant: the merchant_id they operate (defaults to a generated id).
+    /// For agent: the agent_id. Ignored for admin.
+    tenant_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct LoginBody {
+    email: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct AuthResponse {
+    token: String,
+    role: String,
+    account_id: String,
+    tenant_id: Option<String>,
+}
+
+async fn signup(
+    State(state): State<AppState>,
+    Json(body): Json<SignupBody>,
+) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let role = body.role.as_str();
+    if !matches!(role, "merchant" | "agent" | "admin") {
+        return Err((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "invalid role".into() })));
+    }
+    // Admins have no tenant; merchants/agents must declare one.
+    let tenant_id = match role {
+        "admin" => None,
+        _ => Some(body.tenant_id.unwrap_or_else(|| format!("{}-{}", role, uuid::Uuid::new_v4()))),
+    };
+
+    let account = db::auth_repo::AuthRepo::new(state.db.clone())
+        .create_account(role, &body.email, &body.name, &body.password, tenant_id.as_deref())
+        .await
+        .map_err(|e| (StatusCode::CONFLICT, Json(ErrorResponse { error: format!("signup failed: {e}") })))?;
+
+    let claims = auth::Claims {
+        sub: account.account_id.to_string(),
+        role: account.role,
+        tenant_id: account.tenant_id,
+        exp: (chrono::Utc::now() + chrono::Duration::hours(12)).timestamp(),
+    };
+    let token = auth::issue_token(&state.jwt_secret, &claims)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok(Json(AuthResponse {
+        token,
+        role: claims.role,
+        account_id: claims.sub,
+        tenant_id: claims.tenant_id,
+    }))
+}
+
+async fn login(
+    State(state): State<AppState>,
+    Json(body): Json<LoginBody>,
+) -> Result<Json<AuthResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let repo = db::auth_repo::AuthRepo::new(state.db.clone());
+    let account = repo
+        .verify_password(&body.email, &body.password)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .ok_or_else(|| (StatusCode::UNAUTHORIZED, Json(ErrorResponse { error: "invalid credentials".into() })))?;
+
+    let claims = auth::Claims {
+        sub: account.account_id.to_string(),
+        role: account.role,
+        tenant_id: account.tenant_id,
+        exp: (chrono::Utc::now() + chrono::Duration::hours(12)).timestamp(),
+    };
+    let token = auth::issue_token(&state.jwt_secret, &claims)
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok(Json(AuthResponse {
+        token,
+        role: claims.role,
+        account_id: claims.sub,
+        tenant_id: claims.tenant_id,
+    }))
+}
+
+async fn whoami(auth::AuthUser(claims): auth::AuthUser) -> Json<auth::Claims> {
+    Json(claims)
+}
+
 // ─── Sample Data (for demo) ──────────────────────────────────────────────
 
 fn sample_manifest() -> MerchantManifest {
@@ -548,6 +645,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let key_id = std::env::var("RAZORPAY_KEY_ID").unwrap_or_default();
     let key_secret = std::env::var("RAZORPAY_KEY_SECRET").unwrap_or_default();
+    let jwt_secret = std::env::var("JWT_SECRET").unwrap_or_else(|_| {
+        tracing::warn!("JWT_SECRET not set — generating an ephemeral signing key (tokens invalid after restart)");
+        use rand::RngCore;
+        let mut bytes = [0u8; 32];
+        rand::thread_rng().fill_bytes(&mut bytes);
+        hex::encode(bytes)
+    })
+    .into_bytes();
 
     // ---- Signing-key persistence at rest ---------------------------------
     // The Ed25519 signing key must survive restarts, otherwise every
@@ -580,6 +685,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         catalog,
         merchant,
         merchant_id,
+        jwt_secret,
         reconcile,
     };
 
@@ -592,6 +698,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit/{mandate_id}", get(get_audit_trail))
         .route("/admin/simulate-drift", post(simulate_drift))
+        .route("/auth/signup", post(signup))
+        .route("/auth/login", post(login))
+        .route("/auth/me", get(whoami))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
