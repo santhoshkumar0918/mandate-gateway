@@ -172,6 +172,47 @@ export async function fetchCatalog(token?: string): Promise<Product[]> {
   return res.json();
 }
 
+export interface MandateSummary {
+  mandate_id: string;
+  merchant_id: string;
+  buyer_agent_id: string;
+  max_amount: number;
+  currency: string;
+  scope: string[];
+  frequency: string;
+  spent_amount: number;
+  status: string;
+  expires_at: string;
+}
+
+export async function getMandates(
+  token: string,
+  merchantId?: string,
+): Promise<MandateSummary[]> {
+  const url = new URL(`${GATEWAY_URL}/mandates`);
+  if (merchantId) url.searchParams.set("merchant_id", merchantId);
+  const res = await fetch(url, { headers: authHeader(token), cache: "no-store" });
+  if (!res.ok) throw new Error(`Failed to load mandates: ${res.status}`);
+  return res.json();
+}
+
+export async function updateCatalogPrice(
+  token: string,
+  productId: string,
+  price: number,
+): Promise<{ product_id: string; price: number }> {
+  const res = await fetch(`${GATEWAY_URL}/catalog/${productId}/price`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", ...authHeader(token) },
+    body: JSON.stringify({ price }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.error || `Price update failed: ${res.status}`);
+  }
+  return res.json();
+}
+
 // ─── Audit ───────────────────────────────────────────────────────────────
 
 export async function fetchAuditTrail(
