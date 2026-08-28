@@ -1,4 +1,5 @@
 pub mod audit_repo;
+pub mod auth_repo;
 pub mod catalog_repo;
 pub mod error;
 pub mod intent_repo;
