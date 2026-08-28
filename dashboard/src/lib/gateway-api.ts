@@ -238,6 +238,25 @@ export async function getAuditFeed(
   return res.json();
 }
 
+export interface Mismatch {
+  mismatch_id: string;
+  mandate_id: string;
+  intent_id: string;
+  kind: Record<string, unknown>;
+  status: string;
+  refund_id: string | null;
+  detected_at: string;
+}
+
+export async function getMismatches(token: string): Promise<Mismatch[]> {
+  const res = await fetch(`${GATEWAY_URL}/reconciliation/mismatches`, {
+    headers: authHeader(token),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to load mismatches: ${res.status}`);
+  return res.json();
+}
+
 // ─── Audit ───────────────────────────────────────────────────────────────
 
 export async function fetchAuditTrail(
