@@ -115,6 +115,16 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       reflects the new price.
     - **Done — ticket file `docs/product-backlog/issues/06-*.md` deleted.**
 
+0.11. **Ticket 07 — live audit stream** (`855782e`, `1ff34de`):
+    - Gateway: `audit_repo::list_recent` + `GET /audit` (JWT `AuthUser`, filters
+      `mandate_id`/`event_type`/`decision`/`limit`) returning recent events.
+    - Dashboard: `(app)/audit/page.tsx` live feed — polls every 2.5s, LIVE
+      pulse indicator, decision/event filters, new-row fade-in. Replaces the
+      old root `audit/page.tsx` (now under the shell). `getAuditFeed` added.
+    - `bun run build` passes. Gateway `GET /audit` verified returning real
+      events (mandate_issued, policy.evaluate, payment events).
+    - **Done — ticket file `docs/product-backlog/issues/07-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -162,10 +172,10 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-8 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **07 (live audit stream)** is now unblocked (03 + 05 DONE; 06 also
-DONE). Full remaining chain: 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11};
-13←all; 14←{05,06,07}.
+7 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **08 (continuous agent worker)** is now unblocked (04 DONE). Full
+remaining chain: 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
+14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -173,7 +183,8 @@ DONE). Full remaining chain: 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←
 4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
 5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
 6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
-7. `07-live-audit-stream` — real-time audit trail UI. No blockers. (NEXT.)
+7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
+8. `08-continuous-agent-worker` — agent runs as a managed worker, not a script. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -188,8 +199,8 @@ DONE). Full remaining chain: 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←
 
 ## In progress right now
 
-Ticket **07: live audit stream (real-time audit trail UI)** — unblocked now that
-01, 02, 03, 04, 05, 06 are done.
+Ticket **08: continuous agent worker (agent as a managed service, not a script)** —
+unblocked now that 04 is done.
 
 ## Blocked / waiting on
 
