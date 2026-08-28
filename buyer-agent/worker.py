@@ -172,23 +172,46 @@ def loop_mode(api_key: str):
 
 
 def queue_mode(api_key: str):
-    """Production mode: consume tasks from a Redis queue, idempotent."""
+    """Production mode: consume tasks from a Redis queue, idempotent.
+
+    The agent is also self-driving: when no task is enqueued within
+    ``LOOP_INTERVAL`` seconds it performs a run on its own, so the buyer
+    keeps operating continuously whether or not an orchestrator pushes work.
+    Redis errors are tolerated (reconnect + continue) so a transient outage
+    never kills the worker.
+    """
     import redis
 
-    r = redis.Redis.from_url(REDIS_URL)
-    print(f"[worker] queue mode consuming {QUEUE_NAME}")
+    r = redis.Redis.from_url(
+        REDIS_URL, decode_responses=True, socket_timeout=LOOP_INTERVAL + 30
+    )
+    print(f"[worker] queue mode consuming {QUEUE_NAME} (self-drive every {LOOP_INTERVAL}s)")
+    last_self_drive = 0.0
     while not _shutdown:
-        item = r.blpop(QUEUE_NAME, timeout=5)
-        if not item:
+        try:
+            item = r.blpop(QUEUE_NAME, timeout=LOOP_INTERVAL)
+        except redis.exceptions.RedisError as exc:
+            print(f"[worker] redis error, retrying: {exc}", file=sys.stderr)
+            time.sleep(5)
             continue
-        task = json.loads(item[1])
-        task_id = task.get("task_id", str(uuid.uuid4()))
-        if _processed_seen(r, task_id):
-            print(f"[worker] skipping already-processed {task_id}")
+        if item:
+            task = json.loads(item[1])
+            task_id = task.get("task_id", str(uuid.uuid4()))
+            if _processed_seen(r, task_id):
+                print(f"[worker] skipping already-processed {task_id}")
+                continue
+            events = run_once(api_key)
+            emit(events, task_id)
+            _mark_processed(r, task_id)
+            last_self_drive = time.time()
             continue
-        events = run_once(api_key)
-        emit(events, task_id)
-        _mark_processed(r, task_id)
+        # Queue idle — self-drive if the interval has elapsed.
+        if time.time() - last_self_drive >= LOOP_INTERVAL:
+            task_id = str(uuid.uuid4())
+            events = run_once(api_key)
+            emit(events, task_id)
+            _mark_processed(r, task_id)
+            last_self_drive = time.time()
 
 
 def main():

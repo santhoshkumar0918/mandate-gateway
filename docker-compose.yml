@@ -39,6 +39,7 @@ services:
       - "3000:3000"
     environment:
       GATEWAY_URL: http://gateway:8000
+      NODE_ENV: production
     depends_on:
       - gateway
 
@@ -59,7 +60,7 @@ services:
       GATEWAY_URL: http://gateway:8000
       REDIS_URL: redis://redis:6379
       AGENT_QUEUE: agent:tasks
-      BUDGET: "50000"
+      BUDGET: "5000000"
       CATEGORY: "electronics"
       AGENT_EMAIL: agent-001@buyer.local
       AGENT_TENANT: agent-001
