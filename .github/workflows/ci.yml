@@ -1,0 +1,46 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  gateway:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: gateway
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+      - name: Build
+        run: cargo build --workspace --bins
+
+  dashboard:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dashboard
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: latest
+      - run: bun install --frozen-lockfile
+      - name: Build (typecheck + standalone)
+        run: bun run build
+
+  orchestration:
+    runs-on: ubuntu-latest
+    needs: [gateway, dashboard]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate docker compose build
+        run: docker compose build
