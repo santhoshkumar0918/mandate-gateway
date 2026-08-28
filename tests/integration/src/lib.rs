@@ -489,4 +489,41 @@ mod db_auth_tests {
             .await
             .unwrap();
     }
+
+    #[tokio::test]
+    async fn api_key_create_verify_revoke() {
+        let pool = pool().await;
+        let auth = AuthRepo::new(pool.clone());
+        let email = format!("key+{}@test.local", uuid::Uuid::new_v4());
+        let acct = auth
+            .create_account("agent", &email, "Key Tester", "pw", Some("tenant-k"))
+            .await
+            .unwrap();
+
+        let repo = db::api_key_repo::ApiKeyRepo::new(pool.clone());
+        let (raw, row) = repo
+            .create_key(acct.account_id, "demo", vec!["mandate:issue".into()], Some("tenant-k"))
+            .await
+            .unwrap();
+        assert_eq!(row.scopes.as_array().unwrap().len(), 1);
+
+        // The raw key verifies and resolves to the row.
+        let resolved = repo.verify_key(&raw).await.unwrap();
+        assert!(resolved.is_some());
+        assert_eq!(resolved.unwrap().key_id, row.key_id);
+
+        // A tampered key does not verify.
+        assert!(repo.verify_key("magw_deadbeef").await.unwrap().is_none());
+
+        // Revoke, then the key no longer verifies.
+        assert!(repo.revoke(row.key_id, acct.account_id).await.unwrap());
+        assert!(repo.verify_key(&raw).await.unwrap().is_none());
+
+        // Cleanup.
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(acct.account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
 }
