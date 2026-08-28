@@ -184,6 +184,28 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       18 unresolved mismatches, etc.), merchant 403.
     - **Done — ticket file `docs/product-backlog/issues/12-*.md` deleted.**
 
+0.17. **Ticket 13 — CI/CD + orchestration** (`5dba240`, `7cf31e3`, `fc93044`,
+      `2149486`, `9a189f4`, `aae0c8f`):
+    - `docker compose up` now brings up the WHOLE stack (postgres, gateway,
+      dashboard, redis, buyer-agent) and is live-verified: gateway `/manifest`
+      200, dashboard `/login` 200, authenticated `/catalog` 200 (server-side
+      `fetchMe` reaches `gateway:8000` via `GATEWAY_URL`), merchant signup →
+      JWT, admin metrics 403 for non-admin, and the **continuous buyer agent
+      purchases live** (discover→pick→mandate→`order_id`, status `created`).
+    - Dockerfiles fixed: gateway Rust 1.96 + openssl dev/runtime; dashboard
+      `output: standalone` + server/client gateway URL split; buyer-agent
+      unbuffered + resilient queue mode (self-drives when queue idle, tolerates
+      Redis errors, `socket_timeout` above blpop interval).
+    - CI: `.github/workflows/ci.yml` (gateway clippy+build, dashboard build,
+      `docker compose build`).
+    - **Trust-engine bug found & fixed during docker verify:** mandate
+      signature covered `issued_at`/`expires_at`, which Postgres `timestamptz`
+      truncates to microseconds → every freshly-issued mandate failed its own
+      verification after the DB round-trip (`ReplayDetected`). Fixed by
+      excluding the timestamps from the signed payload (`5dba240`). Old
+      mandates already in the DB are now unverifiable (test data only).
+    - **Done — ticket file `docs/product-backlog/issues/13-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -231,9 +253,8 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
- 2 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
- peers): **13 (CI/CD + orchestration)** is now unblocked (all build tickets done).
- Full remaining chain: 14←{05,06,07}.
+ 1 remaining tracer-bullet vertical slice. No blockers. **14 (marketing +
+ landing + demo polish)** is the final slice (14←{05,06,07}, all done).
 
  1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
  2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -247,7 +268,8 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
  10. ~~`10-reconciliation-ui-alerting`~~ — **DONE** (`9ec281e`+follow-ups), file deleted.
  11. ~~`11-gateway-cache-ratelimit`~~ — **DONE** (`69336b4`), file deleted.
  12. ~~`12-admin-console-observability`~~ — **DONE** (`fe08df2`+follow-ups), file deleted.
- 13. `13-cicd-orchestration` — GitHub Actions + `docker compose up` = whole stack. (NEXT.)
+ 13. ~~`13-cicd-orchestration`~~ — **DONE** (`5dba240`+follow-ups), file deleted.
+ 14. `14-marketing-landing-demo-polish` — landing page + filmable demo. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -262,8 +284,8 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Ticket **13: CI/CD + orchestration** — unblocked now that all build tickets are
-done; makes the whole stack reproducible via `docker compose up`.
+Ticket **14: marketing landing + demo polish** — the final slice; a public
+landing page that explains the product and a filmable end-to-end demo flow.
 
 ## Blocked / waiting on
 
