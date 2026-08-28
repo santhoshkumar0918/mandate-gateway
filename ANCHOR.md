@@ -206,6 +206,18 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       mandates already in the DB are now unverifiable (test data only).
     - **Done — ticket file `docs/product-backlog/issues/13-*.md` deleted.**
 
+0.18. **Ticket 14 — marketing landing + demo polish** (`018092a`):
+    - New public root `dashboard/src/app/page.tsx`: dark fintech landing
+      (hero, 3-step flow, trust pillars, live-agent note, CTAs to /login &
+      /signup). Authenticated dashboard home relocated to `/dashboard`;
+      AppShell nav, login/signup redirects, and `proxy.ts` (treats `/` as
+      public) updated. `bun run build` passes; verified `/` 200 (marketing),
+      `/dashboard` 307 without token, `/login` 200. Dashboard image rebuilt.
+    - The filmable end-to-end demo is live: `docker compose up` runs the
+      continuous buyer agent (discover→mandate→purchase, streamed to the
+      Agent Console + audit + reconciliation views).
+    - **Done — ticket file `docs/product-backlog/issues/14-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -253,8 +265,10 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
- 1 remaining tracer-bullet vertical slice. No blockers. **14 (marketing +
- landing + demo polish)** is the final slice (14←{05,06,07}, all done).
+ 0 remaining tracer-bullet vertical slices. **Backlog complete — all 14
+ tickets shipped.** Full chain resolved: 14←{05,06,07}; 13←all; 12←{03,11};
+ 11←04; 10←{06,07}; 09←{04}; 08←04; 07←06; 06←02; 05←03; 04←03; 03←02; 02←01;
+ 01 standalone.
 
  1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
  2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -269,7 +283,7 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
  11. ~~`11-gateway-cache-ratelimit`~~ — **DONE** (`69336b4`), file deleted.
  12. ~~`12-admin-console-observability`~~ — **DONE** (`fe08df2`+follow-ups), file deleted.
  13. ~~`13-cicd-orchestration`~~ — **DONE** (`5dba240`+follow-ups), file deleted.
- 14. `14-marketing-landing-demo-polish` — landing page + filmable demo. (NEXT.)
+ 14. ~~`14-marketing-landing-demo-polish`~~ — **DONE** (`018092a`), file deleted.
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -284,8 +298,10 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Ticket **14: marketing landing + demo polish** — the final slice; a public
-landing page that explains the product and a filmable end-to-end demo flow.
+Nothing — the 14-ticket product backlog is complete and committed. Next
+possible work (not yet ticketed): production deploy target (Render/Fly),
+load/soak testing of the continuous agent, multi-merchant isolation, and a
+recorded demo video.
 
 ## Blocked / waiting on
 
