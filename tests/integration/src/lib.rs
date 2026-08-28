@@ -397,3 +397,52 @@ mod db_keychain_tests {
             .unwrap();
     }
 }
+
+/// DB-backed test proving the catalog is the Postgres source of truth, so it
+/// survives restarts and is not a per-process in-memory `HashMap`. Requires a
+/// migrated Postgres reachable via `DATABASE_URL`.
+#[cfg(test)]
+mod db_catalog_tests {
+    use db::catalog_repo::CatalogRepo;
+
+    async fn pool() -> db::PgPool {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://santhoshkumar0918@localhost:5432/mandate_gateway".into());
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .expect("test database must be running and migrated")
+    }
+
+    #[tokio::test]
+    async fn catalog_is_sourced_from_postgres() {
+        let pool = pool().await;
+        let repo = CatalogRepo::new(pool.clone());
+
+        // The seeded merchant-001 catalog must be readable.
+        let products = repo.list("merchant-001").await.unwrap();
+        assert!(
+            !products.is_empty(),
+            "seeded catalog must be present in Postgres"
+        );
+
+        // A known product resolves and its price is the persisted value.
+        let product = repo.get("merchant-001", "prod-001").await.unwrap();
+        assert!(product.is_some());
+        let product = product.unwrap();
+        assert_eq!(product.price, 129_900);
+
+        // A price change is persisted and read back (drift scenario).
+        repo.set_price("merchant-001", "prod-001", 199_900)
+            .await
+            .unwrap();
+        let after = repo.get("merchant-001", "prod-001").await.unwrap().unwrap();
+        assert_eq!(after.price, 199_900);
+
+        // Restore the seeded value so the demo stays deterministic.
+        repo.set_price("merchant-001", "prod-001", 129_900)
+            .await
+            .unwrap();
+    }
+}
