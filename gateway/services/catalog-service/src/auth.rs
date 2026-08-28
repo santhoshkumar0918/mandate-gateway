@@ -66,3 +66,44 @@ impl FromRequestParts<AppState> for AuthUser {
         }
     }
 }
+
+/// A buyer agent (or programmatic client) authenticated by a scoped API key.
+///
+/// Extracted from `Authorization: Bearer magw_...`. The handler receives the
+/// resolved key row (account id, tenant id, scopes) so it can scope the
+/// action to the key's tenant and check `scopes` before acting.
+#[derive(Debug, Clone)]
+pub struct ApiKey(pub db::api_key_repo::ApiKeyRow);
+
+impl FromRequestParts<AppState> for ApiKey {
+    type Rejection = (StatusCode, &'static str);
+
+    #[allow(clippy::manual_async_fn)]
+    fn from_request_parts(
+        parts: &mut Parts,
+        state: &AppState,
+    ) -> impl std::future::Future<Output = Result<Self, Self::Rejection>> + Send {
+        async move {
+            let header = parts
+                .headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .ok_or((StatusCode::UNAUTHORIZED, "missing authorization header"))?;
+
+            let raw = header
+                .strip_prefix("Bearer ")
+                .ok_or((StatusCode::UNAUTHORIZED, "authorization must be a Bearer token"))?;
+
+            if !raw.starts_with("magw_") {
+                return Err((StatusCode::UNAUTHORIZED, "API key must start with magw_"));
+            }
+
+            let repo = db::api_key_repo::ApiKeyRepo::new(state.db.clone());
+            match repo.verify_key(raw).await {
+                Ok(Some(row)) => Ok(ApiKey(row)),
+                Ok(None) => Err((StatusCode::UNAUTHORIZED, "unknown or revoked API key")),
+                Err(_) => Err((StatusCode::INTERNAL_SERVER_ERROR, "key lookup failed")),
+            }
+        }
+    }
+}

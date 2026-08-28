@@ -1,7 +1,7 @@
 use axum::{
     extract::{Path, State},
     http::StatusCode,
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use chrono::Utc;
@@ -40,9 +40,7 @@ struct AppState {
 
 #[derive(Deserialize)]
 struct IssueMandateBody {
-    user_id: String,
     merchant_id: String,
-    buyer_agent_id: String,
     max_amount: i64,
     currency: String,
     scope: Vec<String>,
@@ -242,9 +240,17 @@ async fn simulate_drift(
 }
 
 async fn issue_mandate(
+    auth::ApiKey(key): auth::ApiKey,
     State(state): State<AppState>,
     Json(body): Json<IssueMandateBody>,
 ) -> Result<(StatusCode, Json<IssueMandateResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if !has_scope(&key, "mandate:issue") {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "key missing scope: mandate:issue".into() })));
+    }
+    let buyer_agent_id = key.tenant_id.clone().ok_or_else(|| {
+        (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "agent key has no tenant_id".into() }))
+    })?;
+
     let frequency = match body.frequency.as_str() {
         "recurring" => Frequency::Recurring,
         _ => Frequency::OneTime,
@@ -253,9 +259,9 @@ async fn issue_mandate(
     let expires_in_hours = body.expires_in_hours.unwrap_or(1);
 
     let params = NewMandate {
-        user_id: body.user_id,
+        user_id: key.account_id.to_string(),
         merchant_id: body.merchant_id,
-        buyer_agent_id: body.buyer_agent_id,
+        buyer_agent_id,
         max_amount: body.max_amount,
         currency: body.currency,
         scope: body.scope,
@@ -299,9 +305,13 @@ async fn issue_mandate(
 
 #[axum::debug_handler]
 async fn execute_purchase(
+    auth::ApiKey(key): auth::ApiKey,
     State(state): State<AppState>,
     Json(body): Json<PurchaseRequest>,
 ) -> Result<(StatusCode, Json<PurchaseResponse>), (StatusCode, Json<ErrorResponse>)> {
+    if !has_scope(&key, "purchase:exec") {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "key missing scope: purchase:exec".into() })));
+    }
     // 1. Fetch mandate
     let mandate = db::mandate_repo::find_by_id(&state.db, body.mandate_id).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
@@ -591,6 +601,114 @@ async fn whoami(auth::AuthUser(claims): auth::AuthUser) -> Json<auth::Claims> {
     Json(claims)
 }
 
+/// True if the API key's `scopes` JSON array contains `scope`.
+fn has_scope(key: &db::api_key_repo::ApiKeyRow, scope: &str) -> bool {
+    key.scopes
+        .as_array()
+        .map(|a| a.iter().any(|v| v.as_str() == Some(scope)))
+        .unwrap_or(false)
+}
+
+// ─── Agent API-key handlers ───────────────────────────────────────────────
+
+#[derive(Deserialize)]
+struct CreateKeyBody {
+    label: String,
+    scopes: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct CreateKeyResponse {
+    key: String,           // raw key, shown once
+    key_id: String,
+    label: String,
+    scopes: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct KeyInfo {
+    key_id: String,
+    label: String,
+    scopes: Vec<String>,
+    tenant_id: Option<String>,
+    revoked: bool,
+    created_at: chrono::DateTime<chrono::Utc>,
+    last_used_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+/// Issues a scoped API key for the authenticated account.
+async fn create_agent_key(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<CreateKeyBody>,
+) -> Result<Json<CreateKeyResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let account_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let (raw, row) = db::api_key_repo::ApiKeyRepo::new(state.db.clone())
+        .create_key(account_id, &body.label, body.scopes.clone(), claims.tenant_id.as_deref())
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    Ok(Json(CreateKeyResponse {
+        key: raw,
+        key_id: row.key_id.to_string(),
+        label: row.label,
+        scopes: body.scopes,
+    }))
+}
+
+/// Lists the authenticated account's API keys (never returns raw secrets).
+async fn list_agent_keys(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<KeyInfo>>, (StatusCode, Json<ErrorResponse>)> {
+    let account_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let rows = db::api_key_repo::ApiKeyRepo::new(state.db.clone())
+        .list_for_account(&account_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let infos = rows
+        .into_iter()
+        .map(|r| KeyInfo {
+            key_id: r.key_id.to_string(),
+            label: r.label,
+            scopes: r.scopes.as_array().map(|a| {
+                a.iter().filter_map(|v| v.as_str().map(|s| s.to_string())).collect()
+            }).unwrap_or_default(),
+            tenant_id: r.tenant_id,
+            revoked: r.revoked,
+            created_at: r.created_at,
+            last_used_at: r.last_used_at,
+        })
+        .collect();
+    Ok(Json(infos))
+}
+
+/// Revokes one of the authenticated account's API keys.
+async fn revoke_agent_key(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+    Path(key_id): Path<Uuid>,
+) -> Result<StatusCode, (StatusCode, Json<ErrorResponse>)> {
+    let account_id = uuid::Uuid::parse_str(&claims.sub)
+        .map_err(|e| (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let ok = db::api_key_repo::ApiKeyRepo::new(state.db.clone())
+        .revoke(key_id, account_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    if ok {
+        Ok(StatusCode::NO_CONTENT)
+    } else {
+        Err((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "key not found".into() })))
+    }
+}
+
 // ─── Sample Data (for demo) ──────────────────────────────────────────────
 
 fn sample_manifest() -> MerchantManifest {
@@ -701,6 +819,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/auth/signup", post(signup))
         .route("/auth/login", post(login))
         .route("/auth/me", get(whoami))
+        .route("/agents/keys", post(create_agent_key))
+        .route("/agents/keys", get(list_agent_keys))
+        .route("/agents/keys/{id}", delete(revoke_agent_key))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
