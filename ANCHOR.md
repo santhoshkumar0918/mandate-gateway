@@ -39,6 +39,19 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       integration harness so its tests run.
     - **Done — ticket file `docs/product-backlog/issues/01-*.md` deleted.**
 
+0.6. **Ticket 02 — catalog + merchants to Postgres source of truth** (`bd3e997`,
+    `fc85d70`, `309de50`, `712c9d5`):
+    - Migration `004_catalog.sql`: `merchants` + `catalog` tables, seeded with
+      merchant-001 + 8 products (idempotent).
+    - `db::catalog_repo` + `db::merchant_repo` (Postgres-backed list/get/set_price,
+      FromRow structs).
+    - Gateway handlers (`get_catalog`, `simulate_drift`, `execute_purchase`,
+      `get_manifest`) now read/write Postgres; removed the in-memory `CatalogStore`.
+      Catalog is per-tenant (merchant_id); `MERCHANT_ID` env overrides default.
+    - Test `db_catalog_tests::catalog_is_sourced_from_postgres` passes; live boot
+      served 8 products + persisted manifest from Postgres.
+    - **Done — ticket file `docs/product-backlog/issues/02-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -86,18 +99,16 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-13 remaining tracer-bullet vertical slices, blockers declared. Work the
-frontier (no unblocked peers): **02 (catalog → Postgres)** is currently
-unblocked and is the next foundation slice everything else depends on.
-Ticket **01 (signing-key persistence) is DONE** (`4ab68fb`) — see "Last
-completed". Full remaining chain: 03←02; 04←03; 05←03; 06←{02,03,05};
+12 remaining tracer-bullet vertical slices, blockers declared. Work the
+frontier (no unblocked peers): **03 (auth-service)** is now unblocked
+(01 + 02 are both DONE). Full remaining chain: 04←03; 05←03; 06←{02,03,05};
 07←{03,05}; 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
-2. `02-catalog-merchants-postgres` — catalog/merchants out of memory → Postgres.
-   No blockers. (NEXT.)
+2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
 3. `03-auth-service` — merchant/agent/admin signup+login, JWT sessions, RBAC.
+   No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -112,7 +123,7 @@ completed". Full remaining chain: 03←02; 04←03; 05←03; 06←{02,03,05};
 
 ## In progress right now
 
-Ticket **02: catalog + merchants to Postgres source of truth**.
+Ticket **03: auth-service (merchant/agent/admin signup + login, JWT sessions, RBAC)** — unblocked now that 01 and 02 are done.
 
 ## Blocked / waiting on
 
