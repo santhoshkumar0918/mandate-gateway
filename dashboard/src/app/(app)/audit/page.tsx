@@ -4,15 +4,14 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
 import { getAuditFeed, type AuditFeedEntry } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
+import { Pagination } from "@/components/Pagination";
 
 const EVENT_TYPES = [
-  "mandate.issue",
-  "mandate.revoke",
-  "policy.evaluate",
-  "payment.attempt",
-  "payment.captured",
-  "reconcile.check",
-  "reconcile.mismatch",
+  "mandate_issued",
+  "purchase_attempt",
+  "order_created",
+  "budget_debited",
+  "order_reconciled",
 ];
 
 function DecisionBadge({ decision }: { decision: string }) {
@@ -38,6 +37,8 @@ function Feed({ scopeId }: { scopeId: string | null }) {
   const [error, setError] = useState<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const PAGE = 15;
 
   const load = useCallback(async () => {
     const token = getToken();
@@ -141,7 +142,7 @@ function Feed({ scopeId }: { scopeId: string | null }) {
           {entries.length === 0 && (
             <li className="px-4 py-6 text-sm text-muted-foreground">No events yet.</li>
           )}
-          {entries.map((e) => {
+          {entries.slice((page - 1) * PAGE, page * PAGE).map((e) => {
             const k = keyOf(e);
             return (
               <li
@@ -166,6 +167,7 @@ function Feed({ scopeId }: { scopeId: string | null }) {
           })}
         </ul>
       </div>
+      <Pagination page={page} pageSize={PAGE} total={entries.length} onPage={setPage} />
     </div>
   );
 }

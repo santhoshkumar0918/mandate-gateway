@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { getMismatches, type Mismatch } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
+import { Pagination } from "@/components/Pagination";
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -21,6 +22,8 @@ export default function ReconciliationPage() {
   const [items, setItems] = useState<Mismatch[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const PAGE = 8;
 
   const load = useCallback(async () => {
     const token = getToken();
@@ -75,7 +78,7 @@ export default function ReconciliationPage() {
         </p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {items.map((m) => (
+          {items.slice((page - 1) * PAGE, page * PAGE).map((m) => (
             <li
               key={m.mismatch_id}
               className={`mg-fade-in rounded-xl border bg-card p-4 ${
@@ -98,6 +101,7 @@ export default function ReconciliationPage() {
           ))}
         </ul>
       )}
+      <Pagination page={page} pageSize={PAGE} total={items.length} onPage={setPage} />
     </div>
   );
 }

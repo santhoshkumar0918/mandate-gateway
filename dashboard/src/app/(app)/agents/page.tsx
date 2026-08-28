@@ -10,15 +10,14 @@ import {
   type AuditFeedEntry,
 } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
+import { Pagination } from "@/components/Pagination";
 
 const AGENT_EVENTS = new Set([
   "mandate_issued",
-  "mandate.revoke",
-  "policy.evaluate",
-  "payment.attempt",
-  "payment.captured",
-  "reconcile.check",
-  "reconcile.mismatch",
+  "purchase_attempt",
+  "order_created",
+  "budget_debited",
+  "order_reconciled",
 ]);
 
 function Stat({ label, value }: { label: string; value: number }) {
@@ -38,6 +37,8 @@ export default function AgentConsolePage() {
   const [rawKey, setRawKey] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const seen = useRef<Set<string>>(new Set());
+  const [page, setPage] = useState(1);
+  const PAGE = 15;
 
   const loadKeys = useCallback(async () => {
     const token = getToken();
@@ -107,7 +108,7 @@ export default function AgentConsolePage() {
 
   const stats = {
     issued: activity.filter((e) => e.event_type === "mandate_issued").length,
-    purchases: activity.filter((e) => e.event_type === "payment.captured").length,
+    purchases: activity.filter((e) => e.event_type === "order_created" || e.event_type === "budget_debited").length,
     blocked: activity.filter((e) => e.decision === "blocked").length,
   };
 
@@ -196,7 +197,7 @@ export default function AgentConsolePage() {
               No agent activity yet. Start the worker or issue a mandate.
             </li>
           )}
-          {activity.map((e) => {
+          {activity.slice((page - 1) * PAGE, page * PAGE).map((e) => {
             const k = `${e.created_at}|${e.event_type}|${e.actor}`;
             return (
               <li
@@ -219,6 +220,7 @@ export default function AgentConsolePage() {
             );
           })}
         </ul>
+        <Pagination page={page} pageSize={PAGE} total={activity.length} onPage={setPage} />
       </section>
     </div>
   );

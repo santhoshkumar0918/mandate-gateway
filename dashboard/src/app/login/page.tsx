@@ -40,6 +40,14 @@ export default function LoginPage() {
             <p className="text-xs text-muted-foreground">Sign in to your account</p>
           </div>
         </div>
+        <div className="mb-1 rounded-xl border border-accent/40 bg-accent/10 px-4 py-3">
+          <p className="text-sm font-medium text-accent">Live demo unlocked</p>
+          <p className="mt-1 text-xs text-muted-foreground">
+            Sign in with <span className="text-foreground">demo@merchant.local</span> /{" "}
+            <span className="text-foreground">Demo@1234</span> to explore a store already
+            running a live buyer agent, mandates and audit trail.
+          </p>
+        </div>
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
           <label className="flex flex-col gap-1 text-sm">
             <span className="text-muted-foreground">Email</span>

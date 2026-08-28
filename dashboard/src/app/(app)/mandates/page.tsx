@@ -8,6 +8,7 @@ import {
   type MandateSummary,
 } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
+import { Pagination } from "@/components/Pagination";
 
 function StatusBadge({ status }: { status: string }) {
   const map: Record<string, string> = {
@@ -35,6 +36,8 @@ export default function MandatesPage() {
   const [mandates, setMandates] = useState<MandateSummary[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [page, setPage] = useState(1);
+  const PAGE = 8;
 
   const load = useCallback(async () => {
     const token = getToken();
@@ -84,7 +87,7 @@ export default function MandatesPage() {
         <p className="text-sm text-muted-foreground">No mandates issued yet.</p>
       ) : (
         <ul className="flex flex-col gap-3">
-          {mandates.map((m) => (
+          {mandates.slice((page - 1) * PAGE, page * PAGE).map((m) => (
             <li key={m.mandate_id} className="mg-fade-in rounded-xl border border-border bg-card p-4">
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
@@ -122,6 +125,7 @@ export default function MandatesPage() {
           ))}
         </ul>
       )}
+      <Pagination page={page} pageSize={PAGE} total={mandates.length} onPage={setPage} />
     </div>
   );
 }

@@ -7,6 +7,7 @@ import {
   type Product,
 } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
+import { Pagination } from "@/components/Pagination";
 
 function StockBadge({ availability }: { availability: string }) {
   const inStock = availability === "in_stock";
@@ -27,6 +28,8 @@ export default function CatalogPage() {
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState<string | null>(null);
+  const [page, setPage] = useState(1);
+  const PAGE = 6;
 
   const load = useCallback(async () => {
     const token = getToken();
@@ -93,7 +96,7 @@ export default function CatalogPage() {
         <p className="text-sm text-muted-foreground">Loading…</p>
       ) : (
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
-          {products.map((p) => (
+          {products.slice((page - 1) * PAGE, page * PAGE).map((p) => (
             <div key={p.product_id} className="mg-fade-in rounded-xl border border-border bg-card p-4">
               <div className="flex items-start justify-between">
                 <p className="font-medium text-foreground">{p.title}</p>
@@ -125,6 +128,7 @@ export default function CatalogPage() {
           ))}
         </div>
       )}
+      <Pagination page={page} pageSize={PAGE} total={products.length} onPage={setPage} />
     </div>
   );
 }
