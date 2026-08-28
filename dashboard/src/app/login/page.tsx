@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { login } from "@/lib/gateway-api";
-import { setToken } from "@/lib/auth-client";
+import { setToken, setRole } from "@/lib/auth-client";
 
 export default function LoginPage() {
   const router = useRouter();
@@ -19,6 +19,7 @@ export default function LoginPage() {
     try {
       const res = await login({ email, password });
       setToken(res.token);
+      setRole(res.role);
       const next = new URLSearchParams(window.location.search).get("next") || "/";
       router.replace(next);
     } catch (err) {

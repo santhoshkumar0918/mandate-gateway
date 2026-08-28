@@ -57,7 +57,7 @@ export async function signup(input: {
   name: string;
   password: string;
   tenant_id?: string;
-}): Promise<{ token: string }> {
+}): Promise<{ token: string; role: string; tenant_id: string | null }> {
   const res = await fetch(`${GATEWAY_URL}/auth/signup`, {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -254,6 +254,29 @@ export async function getMismatches(token: string): Promise<Mismatch[]> {
     cache: "no-store",
   });
   if (!res.ok) throw new Error(`Failed to load mismatches: ${res.status}`);
+  return res.json();
+}
+
+export interface AdminMetrics {
+  total_mandates: number;
+  active_mandates: number;
+  total_orders: number;
+  captured_volume_paise: number;
+  blocked_decisions: number;
+  mismatches: number;
+  unresolved_mismatches: number;
+  merchants: number;
+  agents: number;
+  admins: number;
+  active_api_keys: number;
+}
+
+export async function getAdminMetrics(token: string): Promise<AdminMetrics> {
+  const res = await fetch(`${GATEWAY_URL}/admin/metrics`, {
+    headers: authHeader(token),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to load admin metrics: ${res.status}`);
   return res.json();
 }
 

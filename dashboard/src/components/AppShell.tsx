@@ -19,6 +19,11 @@ const NAV: NavItem[] = [
   { href: "/agents", label: "Agent Console", icon: "◉" },
 ];
 
+const ADMIN_NAV: NavItem[] = [
+  ...NAV,
+  { href: "/admin", label: "Admin", icon: "⚙" },
+];
+
 export function AppShell({
   user,
   children,
@@ -47,7 +52,7 @@ export function AppShell({
           </div>
         </div>
         <nav className="flex flex-1 flex-col gap-1">
-          {NAV.map((item) => {
+          {(user.role === "admin" ? ADMIN_NAV : NAV).map((item) => {
             const active =
               item.href === "/"
                 ? pathname === "/"

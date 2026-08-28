@@ -3,7 +3,7 @@
 import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signup } from "@/lib/gateway-api";
-import { setToken } from "@/lib/auth-client";
+import { setToken, setRole as persistRole } from "@/lib/auth-client";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -28,6 +28,7 @@ export default function SignupPage() {
         tenant_id: tenantId || undefined,
       });
       setToken(res.token);
+      persistRole(res.role);
       router.replace("/");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
