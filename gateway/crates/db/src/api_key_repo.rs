@@ -87,7 +87,7 @@ impl ApiKeyRepo {
         Ok(result.rows_affected() > 0)
     }
 
-    pub async fn list_for_account(&self, account_id: Uuid) -> Result<Vec<ApiKeyRow>, DbError> {
+    pub async fn list_for_account(&self, account_id: &Uuid) -> Result<Vec<ApiKeyRow>, DbError> {
         let rows = sqlx::query_as::<_, ApiKeyRow>(
             "SELECT key_id, account_id, label, scopes, tenant_id, revoked, created_at, last_used_at \
              FROM api_keys WHERE account_id = $1 ORDER BY created_at DESC",
