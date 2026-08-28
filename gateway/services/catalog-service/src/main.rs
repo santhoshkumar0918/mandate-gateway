@@ -717,6 +717,76 @@ async fn list_mismatches(
     Ok(Json(items))
 }
 
+/// Single integer count helper for admin metrics.
+async fn count(
+    pool: &PgPool,
+    q: &str,
+) -> Result<i64, (StatusCode, Json<ErrorResponse>)> {
+    sqlx::query_scalar::<_, i64>(q)
+        .fetch_one(pool)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))
+}
+
+#[derive(Serialize)]
+struct AdminMetrics {
+    total_mandates: i64,
+    active_mandates: i64,
+    total_orders: i64,
+    captured_volume_paise: i64,
+    blocked_decisions: i64,
+    mismatches: i64,
+    unresolved_mismatches: i64,
+    merchants: i64,
+    agents: i64,
+    admins: i64,
+    active_api_keys: i64,
+}
+
+/// Platform-wide metrics for the admin console. Admin role only.
+async fn admin_metrics(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<AdminMetrics>, (StatusCode, Json<ErrorResponse>)> {
+    if claims.role != "admin" {
+        return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "admin role required".into() })));
+    }
+    let total_mandates = count(&state.db, "SELECT COUNT(*) FROM mandates").await?;
+    let active_mandates = count(&state.db, "SELECT COUNT(*) FROM mandates WHERE status = 'active'").await?;
+    let total_orders = count(&state.db, "SELECT COUNT(*) FROM orders").await?;
+    let captured_volume_paise = sqlx::query_scalar::<_, i64>(
+        "SELECT COALESCE(SUM(amount)::bigint, 0) FROM payments WHERE status = 'captured'",
+    )
+    .fetch_one(&state.db)
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    let blocked_decisions = count(&state.db, "SELECT COUNT(*) FROM audit_log WHERE decision = 'blocked'").await?;
+    let mismatches = count(&state.db, "SELECT COUNT(*) FROM mismatches").await?;
+    let unresolved_mismatches = count(
+        &state.db,
+        "SELECT COUNT(*) FROM mismatches WHERE status <> 'refund_completed'",
+    )
+    .await?;
+    let merchants = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'merchant'").await?;
+    let agents = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'agent'").await?;
+    let admins = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'admin'").await?;
+    let active_api_keys = count(&state.db, "SELECT COUNT(*) FROM api_keys WHERE revoked = false").await?;
+
+    Ok(Json(AdminMetrics {
+        total_mandates,
+        active_mandates,
+        total_orders,
+        captured_volume_paise,
+        blocked_decisions,
+        mismatches,
+        unresolved_mismatches,
+        merchants,
+        agents,
+        admins,
+        active_api_keys,
+    }))
+}
+
 // ─── Auth handlers ───────────────────────────────────────────────────────
 
 #[derive(Deserialize)]
@@ -1032,6 +1102,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/audit", get(list_audit))
         .route("/audit/{mandate_id}", get(get_audit_trail))
         .route("/reconciliation/mismatches", get(list_mismatches))
+        .route("/admin/metrics", get(admin_metrics))
         .route("/admin/simulate-drift", post(simulate_drift))
         .route("/auth/signup", post(signup))
         .route("/auth/login", post(login))
