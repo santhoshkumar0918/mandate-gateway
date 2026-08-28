@@ -13,7 +13,12 @@ use razorpay_client::RazorpayClient;
 use reconciliation::{RazorpayRefundProvider, ReconcileService};
 use serde::{Deserialize, Serialize};
 use sqlx::postgres::PgPoolOptions;
-use std::{net::SocketAddr, sync::Arc};
+use std::{
+    collections::HashMap,
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::{Duration, Instant},
+};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -25,6 +30,7 @@ use manifest::{Availability, MerchantManifest, Product};
 // ─── App State ────────────────────────────────────────────────────────────
 
 #[derive(Clone)]
+#[allow(clippy::type_complexity)]
 struct AppState {
     db: PgPool,
     signer: Arc<MandateSigner>,
@@ -34,6 +40,62 @@ struct AppState {
     merchant_id: String,
     jwt_secret: Vec<u8>,
     reconcile: ReconcileService<RazorpayRefundProvider>,
+    // In-process cache for hot read paths (catalog/manifest) — TTL bounded.
+    catalog_cache: Arc<Mutex<Option<(Instant, Vec<db::catalog_repo::CatalogProductRow>)>>>,
+    // Fixed-window rate limiter for money-moving endpoints, keyed by API key id.
+    rate_limiter: Arc<Mutex<HashMap<String, (Instant, u64)>>>,
+}
+
+/// Cache TTL for catalog/manifest reads.
+const CACHE_TTL: Duration = Duration::from_secs(10);
+/// Money-endpoint rate limit: requests per fixed window per API key.
+const MONEY_WINDOW: Duration = Duration::from_secs(60);
+const MONEY_MAX_PER_WINDOW: u64 = 30;
+
+/// Returns `429` if the key has exceeded its money-endpoint budget this window.
+#[allow(clippy::type_complexity)]
+fn check_rate_limit(
+    limiter: &Arc<Mutex<HashMap<String, (Instant, u64)>>>,
+    key_id: &Uuid,
+) -> Result<(), StatusCode> {
+    let mut map = limiter.lock().map_err(|_| StatusCode::INTERNAL_SERVER_ERROR)?;
+    let now = Instant::now();
+    match map.get_mut(&key_id.to_string()) {
+        Some((start, count)) if now.duration_since(*start) < MONEY_WINDOW => {
+            if *count >= MONEY_MAX_PER_WINDOW {
+                return Err(StatusCode::TOO_MANY_REQUESTS);
+            }
+            *count += 1;
+        }
+        other => {
+            let entry = (now, 1u64);
+            match other {
+                Some(slot) => *slot = entry,
+                None => {
+                    map.insert(key_id.to_string(), entry);
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+/// Returns cached catalog if fresh, else repopulates it from the repo.
+async fn get_cached_catalog(
+    state: &AppState,
+) -> Result<Vec<db::catalog_repo::CatalogProductRow>, db::DbError> {
+    {
+        let guard = state.catalog_cache.lock().expect("catalog_cache poisoned");
+        if let Some((ts, rows)) = guard.as_ref()
+            && ts.elapsed() < CACHE_TTL
+        {
+            return Ok(rows.clone());
+        }
+    }
+    let rows = state.catalog.list(&state.merchant_id).await?;
+    let mut guard = state.catalog_cache.lock().expect("catalog_cache poisoned");
+    *guard = Some((Instant::now(), rows.clone()));
+    Ok(rows)
 }
 
 // ─── Request / Response Types ─────────────────────────────────────────────
@@ -145,11 +207,8 @@ async fn get_manifest(State(state): State<AppState>) -> Json<MerchantManifest> {
     Json(m)
 }
 
-async fn get_catalog(State(state): State<AppState>) -> Result<Json<Vec<Product>>, (StatusCode, Json<ErrorResponse>)> {
-    let rows = state
-        .catalog
-        .list(&state.merchant_id)
-        .await
+async fn get_catalog_cached(State(state): State<AppState>) -> Result<Json<Vec<Product>>, (StatusCode, Json<ErrorResponse>)> {
+    let rows = get_cached_catalog(&state).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
     Ok(Json(rows.into_iter().map(row_to_product).collect()))
 }
@@ -313,6 +372,9 @@ async fn issue_mandate(
     if !has_scope(&key, "mandate:issue") {
         return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "key missing scope: mandate:issue".into() })));
     }
+    if check_rate_limit(&state.rate_limiter, &key.key_id).is_err() {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse { error: "money endpoint rate limit exceeded".into() })));
+    }
     let buyer_agent_id = key.tenant_id.clone().ok_or_else(|| {
         (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "agent key has no tenant_id".into() }))
     })?;
@@ -377,6 +439,9 @@ async fn execute_purchase(
 ) -> Result<(StatusCode, Json<PurchaseResponse>), (StatusCode, Json<ErrorResponse>)> {
     if !has_scope(&key, "purchase:exec") {
         return Err((StatusCode::FORBIDDEN, Json(ErrorResponse { error: "key missing scope: purchase:exec".into() })));
+    }
+    if check_rate_limit(&state.rate_limiter, &key.key_id).is_err() {
+        return Err((StatusCode::TOO_MANY_REQUESTS, Json(ErrorResponse { error: "money endpoint rate limit exceeded".into() })));
     }
     // 1. Fetch mandate
     let mandate = db::mandate_repo::find_by_id(&state.db, body.mandate_id).await
@@ -951,11 +1016,13 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         merchant_id,
         jwt_secret,
         reconcile,
+        catalog_cache: Arc::new(Mutex::new(None)),
+        rate_limiter: Arc::new(Mutex::new(HashMap::new())),
     };
 
     let app = Router::new()
         .route("/manifest", get(get_manifest))
-        .route("/catalog", get(get_catalog))
+        .route("/catalog", get(get_catalog_cached))
         .route("/catalog/{id}/price", post(update_catalog_price))
         .route("/mandates", get(list_mandates))
         .route("/mandate", post(issue_mandate))
