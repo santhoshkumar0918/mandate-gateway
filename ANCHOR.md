@@ -140,6 +140,16 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       (Queue mode path requires Redis to exercise — installed in the image.)
     - **Done — ticket file `docs/product-backlog/issues/08-*.md` deleted.**
 
+0.13. **Ticket 09 — agent console** (`9ab66f2`):
+    - `(app)/agents/page.tsx` expanded into a full operator console: scoped API
+      keys (issue/revoke, raw key shown once), live agent activity feed (polls
+      `GET /audit` every 3s, filtered to agent actors/events, new-row fade-in),
+      and run stats (mandates issued / purchases / blocked). Nav label →
+      "Agent Console".
+    - `bun run build` passes; page renders (keys + stats + activity sections).
+      Activity populates client-side from the verified audit feed.
+    - **Done — ticket file `docs/product-backlog/issues/09-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -187,9 +197,9 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-6 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **09 (agent console)** is now unblocked (04 + 07 DONE). Full remaining
-chain: 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
+5 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **10 (reconciliation UI + alerting)** is now unblocked (06 + 07 DONE).
+Full remaining chain: 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -199,7 +209,8 @@ chain: 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
 7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
 8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
-9. `09-agent-console` — operator view of agent keys/runs/activity. No blockers. (NEXT.)
+9. ~~`09-agent-console`~~ — **DONE** (`9ab66f2`), file deleted.
+10. `10-reconciliation-ui-alerting` — show intent-vs-outcome mismatches + alert. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -214,8 +225,8 @@ chain: 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 ## In progress right now
 
-Ticket **09: agent console (operator view of agent keys, runs, activity)** — unblocked
-now that 04 + 07 are done.
+Ticket **10: reconciliation UI + alerting (intent-vs-outcome mismatches)** — unblocked
+now that 06 + 07 are done.
 
 ## Blocked / waiting on
 
