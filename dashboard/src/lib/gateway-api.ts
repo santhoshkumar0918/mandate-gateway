@@ -1,4 +1,9 @@
-const GATEWAY_URL = process.env.NEXT_PUBLIC_GATEWAY_URL || "http://localhost:8000";
+// Server-side renders prefer GATEWAY_URL (internal docker host); the browser
+// uses NEXT_PUBLIC_GATEWAY_URL (host-published port). Falls back to localhost.
+const GATEWAY_URL =
+  process.env.GATEWAY_URL ||
+  process.env.NEXT_PUBLIC_GATEWAY_URL ||
+  "http://localhost:8000";
 
 export const TOKEN_COOKIE = "mg_token";
 
