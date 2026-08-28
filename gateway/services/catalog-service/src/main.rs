@@ -19,6 +19,7 @@ use std::{
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
@@ -1110,6 +1111,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/agents/keys", post(create_agent_key))
         .route("/agents/keys", get(list_agent_keys))
         .route("/agents/keys/{id}", delete(revoke_agent_key))
+        .layer(CorsLayer::new()
+            .allow_origin(Any)
+            .allow_methods(Any)
+            .allow_headers(Any))
         .layer(TraceLayer::new_for_http())
         .with_state(state);
 
