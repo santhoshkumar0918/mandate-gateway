@@ -18,10 +18,8 @@ use tower_http::trace::TraceLayer;
 use tracing_subscriber::EnvFilter;
 use uuid::Uuid;
 
-mod catalog_store;
 mod manifest;
-use catalog_store::CatalogStore;
-use manifest::{MerchantManifest, Product};
+use manifest::{Availability, MerchantManifest, Product};
 
 // ─── App State ────────────────────────────────────────────────────────────
 
@@ -30,7 +28,9 @@ struct AppState {
     db: PgPool,
     signer: Arc<MandateSigner>,
     razorpay: Arc<RazorpayClient>,
-    catalog: CatalogStore,
+    catalog: db::catalog_repo::CatalogRepo,
+    merchant: db::merchant_repo::MerchantRepo,
+    merchant_id: String,
     reconcile: ReconcileService<RazorpayRefundProvider>,
 }
 
@@ -126,12 +126,32 @@ struct SimulateDriftResponse {
 
 // ─── Handlers ─────────────────────────────────────────────────────────────
 
-async fn get_manifest() -> Json<MerchantManifest> {
-    Json(sample_manifest())
+async fn get_manifest(State(state): State<AppState>) -> Json<MerchantManifest> {
+    let m = state
+        .merchant
+        .get(&state.merchant_id)
+        .await
+        .ok()
+        .flatten()
+        .map(|row| MerchantManifest {
+            merchant_id: row.merchant_id,
+            merchant_name: row.name,
+            capability_version: row.capability_version,
+            supported_scopes: row.supported_scopes,
+            catalog_endpoint: row.catalog_endpoint,
+            mandate_endpoint: row.mandate_endpoint,
+        })
+        .unwrap_or_else(sample_manifest);
+    Json(m)
 }
 
-async fn get_catalog(State(state): State<AppState>) -> Json<Vec<Product>> {
-    Json(state.catalog.list())
+async fn get_catalog(State(state): State<AppState>) -> Result<Json<Vec<Product>>, (StatusCode, Json<ErrorResponse>)> {
+    let rows = state
+        .catalog
+        .list(&state.merchant_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    Ok(Json(rows.into_iter().map(row_to_product).collect()))
 }
 
 #[derive(Serialize)]
@@ -195,10 +215,17 @@ async fn simulate_drift(
     State(state): State<AppState>,
     Json(body): Json<SimulateDriftBody>,
 ) -> Result<Json<SimulateDriftResponse>, (StatusCode, Json<ErrorResponse>)> {
-    let old_price = state.catalog.get(&body.product_id).map(|p| p.price);
+    let old_price = state
+        .catalog
+        .get(&state.merchant_id, &body.product_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .map(|p| p.price);
     let updated = state
         .catalog
-        .set_price(&body.product_id, body.new_price)
+        .set_price(&state.merchant_id, &body.product_id, body.new_price)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
 
     Ok(Json(SimulateDriftResponse {
@@ -281,7 +308,9 @@ async fn execute_purchase(
     // 2. Policy evaluation (auth signature + expiry + budget + scope)
     let product = state
         .catalog
-        .get(&body.product_id)
+        .get(&mandate.merchant_id, &body.product_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
 
     let order_amount = product.price * body.quantity;
@@ -478,6 +507,28 @@ fn sample_manifest() -> MerchantManifest {
     }
 }
 
+/// Maps a persisted catalog row to the ACP-shaped `Product` served by the API.
+fn row_to_product(row: db::catalog_repo::CatalogProductRow) -> Product {
+    Product {
+        product_id: row.product_id,
+        offer_id: row.offer_id,
+        title: row.title,
+        description: row.description,
+        category: row.category,
+        price: row.price,
+        currency: row.currency,
+        availability: match row.availability.as_str() {
+            "out_of_stock" => Availability::OutOfStock,
+            "preorder" => Availability::Preorder,
+            _ => Availability::InStock,
+        },
+        inventory_count: row.inventory_count,
+        seller_name: row.seller_name,
+        seller_id: row.merchant_id,
+        updated_at: row.updated_at,
+    }
+}
+
 // ─── Main ─────────────────────────────────────────────────────────────────
 
 #[tokio::main]
@@ -517,7 +568,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let razorpay = RazorpayClient::new(&key_id, &key_secret);
 
-    let catalog = CatalogStore::new();
+    let catalog = db::catalog_repo::CatalogRepo::new(db.clone());
+    let merchant = db::merchant_repo::MerchantRepo::new(db.clone());
+    let merchant_id = std::env::var("MERCHANT_ID").unwrap_or_else(|_| "merchant-001".into());
     let reconcile = ReconcileService::new(db.clone(), RazorpayRefundProvider(razorpay.clone()));
 
     let state = AppState {
@@ -525,6 +578,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         signer,
         razorpay: Arc::new(razorpay),
         catalog,
+        merchant,
+        merchant_id,
         reconcile,
     };
 
