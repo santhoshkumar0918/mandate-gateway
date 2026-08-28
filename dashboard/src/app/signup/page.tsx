@@ -29,7 +29,7 @@ export default function SignupPage() {
       });
       setToken(res.token);
       persistRole(res.role);
-      router.replace("/");
+      router.replace("/dashboard");
     } catch (err) {
       setError(err instanceof Error ? err.message : "Signup failed");
       setLoading(false);

@@ -3,7 +3,7 @@ import type { NextRequest } from "next/server";
 
 const TOKEN_COOKIE = "mg_token";
 
-const PUBLIC_PATHS = ["/login", "/signup"];
+const PUBLIC_PATHS = ["/", "/login", "/signup"];
 
 export function proxy(req: NextRequest) {
   const { pathname } = req.nextUrl;

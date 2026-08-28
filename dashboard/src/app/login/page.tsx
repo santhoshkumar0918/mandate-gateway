@@ -20,7 +20,7 @@ export default function LoginPage() {
       const res = await login({ email, password });
       setToken(res.token);
       setRole(res.role);
-      const next = new URLSearchParams(window.location.search).get("next") || "/";
+      const next = new URLSearchParams(window.location.search).get("next") || "/dashboard";
       router.replace(next);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Login failed");
