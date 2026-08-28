@@ -446,3 +446,47 @@ mod db_catalog_tests {
             .unwrap();
     }
 }
+
+/// DB-backed test proving account creation + password verification work with
+/// argon2id and reject wrong passwords. Requires a migrated Postgres.
+#[cfg(test)]
+mod db_auth_tests {
+    use db::auth_repo::AuthRepo;
+
+    async fn pool() -> db::PgPool {
+        let url = std::env::var("DATABASE_URL")
+            .unwrap_or_else(|_| "postgres://santhoshkumar0918@localhost:5432/mandate_gateway".into());
+        sqlx::postgres::PgPoolOptions::new()
+            .max_connections(2)
+            .connect(&url)
+            .await
+            .expect("test database must be running and migrated")
+    }
+
+    #[tokio::test]
+    async fn account_signup_and_password_verify() {
+        let pool = pool().await;
+        let repo = AuthRepo::new(pool.clone());
+        let email = format!("agent+{}@test.local", uuid::Uuid::new_v4());
+
+        let acct = repo
+            .create_account("agent", &email, "Test Agent", "s3cret-pass", Some("agent-x"))
+            .await
+            .unwrap();
+        assert_eq!(acct.role, "agent");
+        assert_eq!(acct.tenant_id.as_deref(), Some("agent-x"));
+
+        // Correct password verifies; wrong password does not.
+        let ok = repo.verify_password(&email, "s3cret-pass").await.unwrap();
+        assert!(ok.is_some(), "correct password must verify");
+        let bad = repo.verify_password(&email, "wrong").await.unwrap();
+        assert!(bad.is_none(), "wrong password must not verify");
+
+        // Cleanup.
+        sqlx::query("DELETE FROM accounts WHERE account_id = $1")
+            .bind(acct.account_id)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+}
