@@ -83,6 +83,23 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       revoked key→401, wrong-scope→403. Test `api_key_create_verify_revoke` passes.
     - **Done — ticket file `docs/product-backlog/issues/04-*.md` deleted.**
 
+0.9. **Ticket 05 — web-app shell + design system** (`7583da7`, `67d6d2b`,
+    `0aea822` + `f893695` lockfile):
+    - Dark OLED fintech design system applied to `dashboard` (tokens + IBM Plex
+      Sans, `#22C55E` accent) matching `docs/design-system/mandate-gateway/MASTER.md`.
+    - Cookie auth (`mg_token`) + Next 16 `proxy.ts` route guard (redirect
+      unauthenticated → /login). `auth-client.ts` set/get/clear; `gateway-api.ts`
+      extended with signup/login/me/keys + token-aware catalog/audit.
+    - App shell (`AppShell.tsx`): sidebar nav (Dashboard/Catalog/Mandates/Audit/
+      Agents) + sign-out. Login + signup pages call gateway auth.
+    - Pages: dashboard home (KPI cards), catalog (live products), agents (issue/
+      revoke scoped keys), mandates (placeholder, ticket 06), plus existing
+      consent/audit folded under the guard.
+    - `bun run build` passes. Live verified: /login 200; / → 307 /login; authed
+      / renders "Merchant dashboard", /catalog shows live "Wireless Mouse",
+      /agents shows key manager.
+    - **Done — ticket file `docs/product-backlog/issues/05-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -130,16 +147,17 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-10 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **05 (web-app shell + design system)** is now unblocked (03 DONE; 04
-also DONE). Full remaining chain: 06←{02,03,05}; 07←{03,05}; 08←04; 09←{04,07};
+9 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **06 (merchant dashboard: catalog + mandates)** is now unblocked
+(02 + 03 + 05 DONE). Full remaining chain: 07←{03,05}; 08←04; 09←{04,07};
 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
 3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
 4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
-5. `05-web-app-shell-design-system` — product web app shell + design system. No blockers. (NEXT.)
+5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
+6. `06-merchant-dashboard-catalog-mandates` — catalog mgmt + mandate console. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -154,8 +172,8 @@ also DONE). Full remaining chain: 06←{02,03,05}; 07←{03,05}; 08←04; 09←{
 
 ## In progress right now
 
-Ticket **05: web-app shell + design system (auth → dashboard)** — unblocked now
-that 01, 02, 03, 04 are done.
+Ticket **06: merchant dashboard — catalog management + mandate console** — unblocked
+now that 01, 02, 03, 04, 05 are done.
 
 ## Blocked / waiting on
 
