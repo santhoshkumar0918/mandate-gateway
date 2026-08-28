@@ -1,33 +1,77 @@
 @import "tailwindcss";
 
 :root {
-  --background: #fafafa;
-  --foreground: #18181b;
-  --card: #ffffff;
-  --card-border: #e4e4e7;
-  --muted: #71717a;
-  --approve: #059669;
-  --approve-hover: #047857;
-  --reject: #dc2626;
-  --reject-hover: #b91c1c;
+  /* ── Mandate Gateway design system (dark OLED fintech) ── */
+  --background: #020617;
+  --foreground: #f8fafc;
+  --primary: #0f172a;
+  --on-primary: #ffffff;
+  --secondary: #1e293b;
+  --on-secondary: #ffffff;
+  --accent: #22c55e;
+  --on-accent: #0f172a;
+  --card: #0e1223;
+  --card-foreground: #f8fafc;
+  --muted: #1a1e2f;
+  --muted-foreground: #94a3b8;
+  --border: #334155;
+  --destructive: #ef4444;
+  --on-destructive: #0b0b0b;
+  --ring: #22c55e;
+
+  --space-xs: 0.25rem;
+  --space-sm: 0.5rem;
+  --space-md: 1rem;
+  --space-lg: 1.5rem;
+  --space-xl: 2rem;
+
+  --radius: 0.875rem;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-primary: var(--primary);
+  --color-on-primary: var(--on-primary);
+  --color-secondary: var(--secondary);
+  --color-on-secondary: var(--on-secondary);
+  --color-accent: var(--accent);
+  --color-on-accent: var(--on-accent);
   --color-card: var(--card);
-  --color-card-border: var(--card-border);
+  --color-card-foreground: var(--card-foreground);
   --color-muted: var(--muted);
-  --color-approve: var(--approve);
-  --color-approve-hover: var(--approve-hover);
-  --color-reject: var(--reject);
-  --color-reject-hover: var(--reject-hover);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-border: var(--border);
+  --color-destructive: var(--destructive);
+  --color-on-destructive: var(--on-destructive);
+  --color-ring: var(--ring);
+  --font-sans: var(--font-plex-sans), system-ui, sans-serif;
+  --radius-xl: var(--radius);
+}
+
+* {
+  border-color: var(--color-border);
 }
 
 body {
-  background: var(--background);
-  color: var(--foreground);
-  font-family: var(--font-geist-sans), system-ui, sans-serif;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Accessible focus ring (priority 1 — never remove) */
+:focus-visible {
+  outline: 2px solid var(--color-ring);
+  outline-offset: 2px;
+}
+
+@keyframes mg-fade-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.mg-fade-in { animation: mg-fade-in 0.35s ease-out both; }
+
+@media (prefers-reduced-motion: reduce) {
+  .mg-fade-in { animation: none; }
 }
