@@ -100,6 +100,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       /agents shows key manager.
     - **Done — ticket file `docs/product-backlog/issues/05-*.md` deleted.**
 
+0.10. **Ticket 06 — merchant dashboard: catalog + mandate console** (`43ecf4c`,
+    `f7f03ea`):
+    - Gateway: `GET /mandates?merchant_id=` (merchant-scoped list via
+      `MandateRepo::list_by_merchant`, JWT `AuthUser`) and
+      `POST /catalog/{id}/price` (merchant price edit, `AuthUser`).
+      `to_detail` helper shared by detail + list.
+    - Dashboard: real mandate console (list with status, revoke →
+      `/mandate/revoke`, links to review/audit) and editable catalog (live price
+      updates via `updateCatalogPrice`). `gateway-api.ts` gained `getMandates` +
+      `updateCatalogPrice`.
+    - `bun run build` passes. Live verified: merchant `/mandates` lists the
+      issued mandate; `/catalog/prod-001/price` updates and the catalog page
+      reflects the new price.
+    - **Done — ticket file `docs/product-backlog/issues/06-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -147,17 +162,18 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-9 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **06 (merchant dashboard: catalog + mandates)** is now unblocked
-(02 + 03 + 05 DONE). Full remaining chain: 07←{03,05}; 08←04; 09←{04,07};
-10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
+8 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **07 (live audit stream)** is now unblocked (03 + 05 DONE; 06 also
+DONE). Full remaining chain: 08←04; 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11};
+13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
 3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
 4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
 5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
-6. `06-merchant-dashboard-catalog-mandates` — catalog mgmt + mandate console. No blockers. (NEXT.)
+6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
+7. `07-live-audit-stream` — real-time audit trail UI. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -172,8 +188,8 @@ peers): **06 (merchant dashboard: catalog + mandates)** is now unblocked
 
 ## In progress right now
 
-Ticket **06: merchant dashboard — catalog management + mandate console** — unblocked
-now that 01, 02, 03, 04, 05 are done.
+Ticket **07: live audit stream (real-time audit trail UI)** — unblocked now that
+01, 02, 03, 04, 05, 06 are done.
 
 ## Blocked / waiting on
 
