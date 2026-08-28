@@ -1,5 +1,5 @@
 use axum::{
-    extract::{Path, State},
+    extract::{Path, Query, State},
     http::StatusCode,
     routing::{delete, get, post},
     Json, Router,
@@ -7,7 +7,7 @@ use axum::{
 use chrono::Utc;
 use db::PgPool;
 use mandate_engine::purchase_auth::PurchaseAuth;
-use mandate_engine::{Frequency, MandateSigner, NewMandate};
+use mandate_engine::{Frequency, Mandate, MandateSigner, NewMandate};
 use policy_engine::PolicyEvaluator;
 use razorpay_client::RazorpayClient;
 use reconciliation::{RazorpayRefundProvider, ReconcileService};
@@ -179,31 +179,97 @@ async fn get_mandate(
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
         .ok_or_else(|| (StatusCode::NOT_FOUND, Json(ErrorResponse { error: "mandate not found".into() })))?;
 
-    let status_str = match mandate.status {
+    Ok(Json(to_detail(&mandate)))
+}
+
+/// Maps a stored `Mandate` into the API response DTO (shared by the detail
+/// and list endpoints).
+fn to_detail(m: &Mandate) -> MandateDetailResponse {
+    let status_str = match m.status {
         mandate_engine::MandateStatus::Active => "active",
         mandate_engine::MandateStatus::Revoked => "revoked",
         mandate_engine::MandateStatus::Expired => "expired",
         mandate_engine::MandateStatus::Exhausted => "exhausted",
     };
-    let frequency_str = match mandate.frequency {
+    let frequency_str = match m.frequency {
         mandate_engine::Frequency::OneTime => "one_time",
         mandate_engine::Frequency::Recurring => "recurring",
     };
-
-    Ok(Json(MandateDetailResponse {
-        mandate_id: mandate.mandate_id,
-        user_id: mandate.user_id,
-        merchant_id: mandate.merchant_id,
-        buyer_agent_id: mandate.buyer_agent_id,
-        max_amount: mandate.max_amount,
-        currency: mandate.currency,
-        scope: mandate.scope,
+    MandateDetailResponse {
+        mandate_id: m.mandate_id,
+        user_id: m.user_id.clone(),
+        merchant_id: m.merchant_id.clone(),
+        buyer_agent_id: m.buyer_agent_id.clone(),
+        max_amount: m.max_amount,
+        currency: m.currency.clone(),
+        scope: m.scope.clone(),
         frequency: frequency_str.to_string(),
-        spent_amount: mandate.spent_amount,
+        spent_amount: m.spent_amount,
         status: status_str.to_string(),
-        nonce: mandate.nonce,
-        signature: hex::encode(&mandate.signature),
-        expires_at: mandate.expires_at,
+        nonce: m.nonce.clone(),
+        signature: hex::encode(&m.signature),
+        expires_at: m.expires_at,
+    }
+}
+
+#[derive(Deserialize)]
+struct ListMandatesQuery {
+    merchant_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct UpdatePriceBody {
+    price: i64,
+}
+
+#[derive(Serialize)]
+struct PriceUpdateResponse {
+    product_id: String,
+    price: i64,
+}
+
+/// Merchant-scoped list of mandates (operator console).
+async fn list_mandates(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+    Query(params): Query<ListMandatesQuery>,
+) -> Result<Json<Vec<MandateDetailResponse>>, (StatusCode, Json<ErrorResponse>)> {
+    let merchant_id = params.merchant_id.or(claims.tenant_id).ok_or((
+        StatusCode::BAD_REQUEST,
+        Json(ErrorResponse {
+            error: "merchant_id required".into(),
+        }),
+    ))?;
+
+    let mandates = db::mandate_repo::list_by_merchant(&state.db, &merchant_id)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let items = mandates.iter().map(to_detail).collect();
+    Ok(Json(items))
+}
+
+/// Merchant edits a product's price (operator console).
+async fn update_catalog_price(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+    Path(product_id): Path<String>,
+    Json(body): Json<UpdatePriceBody>,
+) -> Result<Json<PriceUpdateResponse>, (StatusCode, Json<ErrorResponse>)> {
+    let merchant_id = claims
+        .tenant_id
+        .ok_or((StatusCode::BAD_REQUEST, Json(ErrorResponse { error: "merchant tenant required".into() })))?;
+
+    let updated = state
+        .catalog
+        .set_price(&merchant_id, &product_id, body.price)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?
+        .ok_or((StatusCode::NOT_FOUND, Json(ErrorResponse { error: "product not found".into() })))?;
+
+    Ok(Json(PriceUpdateResponse {
+        product_id: updated.product_id,
+        price: updated.price,
     }))
 }
 
@@ -810,6 +876,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let app = Router::new()
         .route("/manifest", get(get_manifest))
         .route("/catalog", get(get_catalog))
+        .route("/catalog/{id}/price", post(update_catalog_price))
+        .route("/mandates", get(list_mandates))
         .route("/mandate", post(issue_mandate))
         .route("/mandate/{id}", get(get_mandate))
         .route("/purchase", post(execute_purchase))
