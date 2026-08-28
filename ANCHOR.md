@@ -150,6 +150,19 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       Activity populates client-side from the verified audit feed.
     - **Done — ticket file `docs/product-backlog/issues/09-*.md` deleted.**
 
+0.14. **Ticket 10 — reconciliation UI + alerting** (`9ec281e`, `1911143`):
+    - Gateway: `mismatch_repo::list_recent` + `GET /reconciliation/mismatches`
+      (JWT `AuthUser`) returning mismatch rows (kind/status/refund_id).
+    - Dashboard: `(app)/reconciliation/page.tsx` — polls every 4s, red alert
+      banner for unreconciled mismatches, per-mismatch cards with status badge
+      (detected/refund_initiated/refund_completed). Nav item "Reconciliation".
+      `getMismatches` added to `gateway-api.ts`.
+    - `bun run build` passes; endpoint verified 200. (Population depends on the
+      reconciliation engine detecting at payment capture — test-mode orders
+      stay `created`, so live mismatches appear once a payment is captured; the
+      engine + insert path already exist from the trust-engine phases.)
+    - **Done — ticket file `docs/product-backlog/issues/10-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -197,9 +210,9 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-5 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **10 (reconciliation UI + alerting)** is now unblocked (06 + 07 DONE).
-Full remaining chain: 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
+4 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **11 (gateway cache + rate-limit)** is now unblocked (04 DONE). Full
+remaining chain: 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -210,7 +223,8 @@ Full remaining chain: 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
 8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
 9. ~~`09-agent-console`~~ — **DONE** (`9ab66f2`), file deleted.
-10. `10-reconciliation-ui-alerting` — show intent-vs-outcome mismatches + alert. No blockers. (NEXT.)
+10. ~~`10-reconciliation-ui-alerting`~~ — **DONE** (`9ec281e`+follow-ups), file deleted.
+11. `11-gateway-cache-ratelimit` — cache catalog/manifest, rate-limit money endpoints. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -225,8 +239,8 @@ Full remaining chain: 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 ## In progress right now
 
-Ticket **10: reconciliation UI + alerting (intent-vs-outcome mismatches)** — unblocked
-now that 06 + 07 are done.
+Ticket **11: gateway cache + rate-limit (resilience)** — unblocked now that 04
+is done.
 
 ## Blocked / waiting on
 
