@@ -173,6 +173,17 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       → 30 OK then 429; `/catalog` cached 200.
     - **Done — ticket file `docs/product-backlog/issues/11-*.md` deleted.**
 
+0.16. **Ticket 12 — admin console + observability** (`fe08df2`, `0122cd3`):
+    - Gateway `GET /admin/metrics` (admin role only → 403 otherwise) aggregates
+      mandates/active, orders, captured volume (paise), blocked decisions,
+      mismatches/unresolved, merchants/agents/admins, active API keys.
+    - Dashboard `(app)/admin/page.tsx` polls every 5s; nav shows "Admin" only
+      for `role==admin` (server `fetchMe` + client role cookie). `getAdminMetrics`
+      added; signup/login persist `mg_role`.
+    - `bun run build` passes; verified: admin 200 (real aggregates: 71 mandates,
+      18 unresolved mismatches, etc.), merchant 403.
+    - **Done — ticket file `docs/product-backlog/issues/12-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -220,22 +231,23 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
- 3 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
- peers): **12 (admin console)** is now unblocked (03 + 11 DONE). Full remaining
- chain: 13←all; 14←{05,06,07}.
+ 2 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+ peers): **13 (CI/CD + orchestration)** is now unblocked (all build tickets done).
+ Full remaining chain: 14←{05,06,07}.
 
-1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
-2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
-3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
-4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
-5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
-6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
-7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
-8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
-9. ~~`09-agent-console`~~ — **DONE** (`9ab66f2`), file deleted.
-10. ~~`10-reconciliation-ui-alerting`~~ — **DONE** (`9ec281e`+follow-ups), file deleted.
-11. ~~`11-gateway-cache-ratelimit`~~ — **DONE** (`69336b4`), file deleted.
-12. `12-admin-console-observability` — admin console + health/tracing. No blockers. (NEXT.)
+ 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
+ 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
+ 3. ~~`03-auth-service`~~ — **DONE** (`ebf0fda`+follow-ups), file deleted.
+ 4. ~~`04-agent-api-keys`~~ — **DONE** (`54ee66b`+follow-ups), file deleted.
+ 5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
+ 6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
+ 7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
+ 8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
+ 9. ~~`09-agent-console`~~ — **DONE** (`9ab66f2`), file deleted.
+ 10. ~~`10-reconciliation-ui-alerting`~~ — **DONE** (`9ec281e`+follow-ups), file deleted.
+ 11. ~~`11-gateway-cache-ratelimit`~~ — **DONE** (`69336b4`), file deleted.
+ 12. ~~`12-admin-console-observability`~~ — **DONE** (`fe08df2`+follow-ups), file deleted.
+ 13. `13-cicd-orchestration` — GitHub Actions + `docker compose up` = whole stack. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -250,8 +262,8 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Ticket **12: admin console + observability** — unblocked now that 03 + 11 are
-done.
+Ticket **13: CI/CD + orchestration** — unblocked now that all build tickets are
+done; makes the whole stack reproducible via `docker compose up`.
 
 ## Blocked / waiting on
 
