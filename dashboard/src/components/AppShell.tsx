@@ -15,7 +15,7 @@ const NAV: NavItem[] = [
   { href: "/catalog", label: "Catalog", icon: "▤" },
   { href: "/mandates", label: "Mandates", icon: "⬡" },
   { href: "/audit", label: "Audit Trail", icon: "≣" },
-  { href: "/agents", label: "Agents", icon: "◉" },
+  { href: "/agents", label: "Agent Console", icon: "◉" },
 ];
 
 export function AppShell({
