@@ -125,6 +125,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       events (mandate_issued, policy.evaluate, payment events).
     - **Done — ticket file `docs/product-backlog/issues/07-*.md` deleted.**
 
+0.12. **Ticket 08 — continuous agent worker (Redis + queue)** (`72a977b`, `ea98b48`):
+    - `buyer-agent/worker.py`: runs as a managed worker, not a one-shot script.
+      Prod consumes tasks from a Redis list (`agent:tasks`) and posts step
+      events to a Redis stream (`agent:events`); local/dev falls back to a
+      timed loop (no Redis needed). Authenticates with a provisioned scoped
+      API key (ticket 04); idempotent via a processed-task set; graceful
+      SIGINT/SIGTERM shutdown.
+    - `buyer-agent/Dockerfile` installs redis + defaults to `worker.py`;
+      `docker-compose.yml` adds `redis` + wires the worker (`REDIS_URL`,
+      depends_on gateway+redis).
+    - Verified locally (loop mode): authenticated, performed a full
+      discover→mandate→purchase run, then shut down gracefully on signal.
+      (Queue mode path requires Redis to exercise — installed in the image.)
+    - **Done — ticket file `docs/product-backlog/issues/08-*.md` deleted.**
+
 0. **Product up-leveling decision + ticket backlog + workflow (this session):**
    - Honest gap assessment written (trust engine strong; identity/UX/deployment
      were prototype-grade; overall ~28% of a sellable product).
@@ -172,10 +187,9 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
-7 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
-peers): **08 (continuous agent worker)** is now unblocked (04 DONE). Full
-remaining chain: 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
-14←{05,06,07}.
+6 remaining tracer-bullet vertical slices. Work the frontier (no unblocked
+peers): **09 (agent console)** is now unblocked (04 + 07 DONE). Full remaining
+chain: 10←{06,07}; 11←04; 12←{03,11}; 13←all; 14←{05,06,07}.
 
 1. ~~`01-signing-key-persistence`~~ — **DONE** (`4ab68fb`), file deleted.
 2. ~~`02-catalog-merchants-postgres`~~ — **DONE** (`bd3e997`+follow-ups), file deleted.
@@ -184,7 +198,8 @@ remaining chain: 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
 5. ~~`05-web-app-shell-design-system`~~ — **DONE** (`7583da7`+follow-ups), file deleted.
 6. ~~`06-merchant-dashboard-catalog-mandates`~~ — **DONE** (`43ecf4c`+follow-ups), file deleted.
 7. ~~`07-live-audit-stream`~~ — **DONE** (`855782e`+follow-ups), file deleted.
-8. `08-continuous-agent-worker` — agent runs as a managed worker, not a script. No blockers. (NEXT.)
+8. ~~`08-continuous-agent-worker`~~ — **DONE** (`72a977b`+follow-ups), file deleted.
+9. `09-agent-console` — operator view of agent keys/runs/activity. No blockers. (NEXT.)
 4. `04-agent-api-keys` — scoped agent credentials, rotation, revoke.
 5. `05-web-app-shell-design-system` — real app shell + locked design system.
 6. `06-merchant-dashboard-catalog-mandates` — catalog CRUD + mandate approve/reject from UI.
@@ -199,8 +214,8 @@ remaining chain: 09←{04,07}; 10←{06,07}; 11←04; 12←{03,11}; 13←all;
 
 ## In progress right now
 
-Ticket **08: continuous agent worker (agent as a managed service, not a script)** —
-unblocked now that 04 is done.
+Ticket **09: agent console (operator view of agent keys, runs, activity)** — unblocked
+now that 04 + 07 are done.
 
 ## Blocked / waiting on
 
