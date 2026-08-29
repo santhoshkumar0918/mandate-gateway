@@ -6,7 +6,7 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-27 — product up-leveling: honest gap assessment, super-app stack, ticket backlog written, AGENTS.md updated.
+**Last updated:** 2026-08-29 — verify-then-pay reconciliation engine + LLM buyer-agent + protocol artifact (architecture deepening after "ideas not implemented" review).
 
 ## Current phase
 
@@ -254,14 +254,49 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
    - Verified live: agent discovers merchant, picks product, issues
      mandate, completes purchase end-to-end.
 
-3. **Dashboard wired to real gateway** (`b30fae1`):
-   - Added `GET /mandate/{id}` endpoint to gateway.
-   - Fixed `approveMandate` (no-op — mandates are active on issuance)
-     and `rejectMandate` (calls `POST /mandate/revoke`).
-   - Added `/audit` page: full audit trail with decision badges, detail
-     JSON, and timestamp.
-   - Success page now links to audit trail.
-   - Dashboard builds clean with `bun run build`.
+ 3. **Dashboard wired to real gateway** (`b30fae1`):
+    - Added `GET /mandate/{id}` endpoint to gateway.
+    - Fixed `approveMandate` (no-op — mandates are active on issuance)
+      and `rejectMandate` (calls `POST /mandate/revoke`).
+    - Added `/audit` page: full audit trail with decision badges, detail
+      JSON, and timestamp.
+    - Success page now links to audit trail.
+    - Dashboard builds clean with `bun run build`.
+
+ 4. **Fulfillment-gated verify-then-pay reconciliation engine** (this session):
+    - Migrations `008_fulfillments.sql` (fulfillments table) +
+      `009_mismatches_intent_nullable.sql` (`mismatches.intent_id` now
+      nullable).
+    - `reconciliation`: new `MismatchKind::FulfillmentTimeout`;
+      `ingest_fulfillment` (idempotent merchant proof POST) and
+      `sweep_unfulfilled` (240s SLA, dedupe guard so each order is
+      recovered once) on `ReconcileService`.
+    - Gateway: `POST /reconciliation/ingest-fulfillment` (merchant/admin
+      gated) + a background sweep spawned at boot that drives the same
+      idempotent refund path as price-drift recovery.
+    - `intent_id` is now `Option<Uuid>` across
+      `Mismatch`/mismatch_repo/response and the TS `Mismatch` type
+      (fulfillment timeouts carry no buyer intent).
+    - Admin metrics expose `unfulfilled_orders`; dashboard Admin KPI shows
+      it (turns red when >0) so the engine is visible in the product.
+    - Verified live against the running stack: an unfulfilled + backdated
+      order → sweep created exactly one `FulfillmentTimeout` mismatch and
+      attempted the refund (test-mode refund errors are expected with no
+      real payment); re-fulfilling the order clears it. `cargo clippy
+      --workspace -D warnings` clean; dashboard `npm run build` clean.
+
+ 5. **Buyer-agent LLM intent + protocol artifact** (this session):
+    - `buyer-agent/intent.py`: OpenRouter LLM intent parsing
+      (`OPENROUTER_API_KEY`, model `OPENROUTER_MODEL` default
+      `meta-llama/llama-3.1-8b-instruct:free`) with a rule-based fallback
+      when the key is absent; wired into both the live agent and the
+      Redis worker. `docker-compose.yml` adds `OPENROUTER_API_KEY` /
+      `OPENROUTER_MODEL` / `AGENT_GOAL`. No OpenAI used.
+    - `docs/protocol.md` written (gitignored per AGENTS.md docs/ rule): the
+      real Mandate Gateway protocol artifact — discovery, scoped agent
+      keys, Ed25519 mandate, deterministic policy gate, verify-then-pay
+      reconciliation, audit trail, scaling, threat model. The "protocol"
+      claim now has a concrete written spec behind it.
 
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
@@ -298,7 +333,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Demo-readiness + UX polish pass (post-backlog, user-requested for judges):
+Architecture deepening (user said the product "looks basic" and "ideas
+aren't implemented"): the prototype-claimed capabilities are now actually
+built and running — the buyer agent uses an LLM (with fallback), the
+verify-then-pay reconciliation engine is real (not just a demo button), and
+the protocol has a written spec. All shipped this session and committed.
+
+Outstanding product-depth opportunities (not yet done — candidate next
+steps if the user wants more):
+- Surface per-order fulfillment status in the merchant console (show which
+  orders are unfulfilled / recovered), not just the aggregate admin KPI.
+- Make the LLM agent's selection visible in the Agent Console (show the
+  parsed intent + reasoning), so the "agent thinks" is observable.
+- Add a real captured-payment path so test-mode refunds in the sweep
+  succeed (currently orders stay `created`; the sweep's refund attempt
+  errors by design in test mode).
 - DONE: Added `scripts/seed_demo.py` (idempotent) that creates a demo merchant
   mapped to `merchant-001` (the live catalog owner) + a demo admin + a scoped
   agent key + one immediate purchase + a reconciliation mismatch. Run AFTER
@@ -335,11 +384,15 @@ Nothing is off-limits.
 
 ## Next task
 
-Record a short demo video / write a one-page judge walkthrough: sign in as the
-demo merchant → watch Overview KPIs + live agent activity update → open
-Mandates/Audit/Reconciliation to see the gated purchases and the auto-recovered
-price-drift mismatch. Optionally enrich the catalog (add `007_catalog_extra.sql`
-+ a product-create API) for a fuller Catalog page.
+Decide the next depth slice with the user (the "basic / not-implemented"
+review is addressed for the three headline ideas; the product can go
+deeper). Candidates, in priority order:
+1. Surface per-order fulfillment status + the LLM agent's parsed intent in
+   the dashboards (makes the new engine + agent observable in-product).
+2. Wire a real captured-payment path so sweep refunds succeed in test mode.
+3. Record a short demo video / one-page judge walkthrough: sign in as the
+   demo merchant → watch Overview KPIs + live agent activity → open
+   Reconciliation to see a verify-then-pay recovery in action.
 
 Stack/completion notes for whoever resumes:
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
