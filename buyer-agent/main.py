@@ -15,6 +15,8 @@ import json
 import os
 import http.client
 
+import intent
+
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 BUDGET = int(os.getenv("BUDGET", "50000"))  # paise
 CATEGORY = os.getenv("CATEGORY", "electronics")
@@ -23,6 +25,9 @@ SHIPPING_ADDRESS = os.getenv("SHIPPING_ADDRESS", "123 Demo Street, Bangalore")
 AGENT_EMAIL = os.getenv("AGENT_EMAIL", "agent-001@buyer.local")
 AGENT_TENANT = os.getenv("AGENT_TENANT", "agent-001")
 AGENT_PASSWORD = os.getenv("AGENT_PASSWORD", "buyer-agent-secret")
+AGENT_GOAL = os.getenv(
+    "AGENT_GOAL", f"Pick a good {CATEGORY} product that fits the shopper's needs and budget"
+)
 
 
 def _request(method, path, body=None, token=None):
@@ -112,14 +117,12 @@ def execute_purchase(api_key, mandate, product):
 
 
 def pick_product(catalog, budget, category):
-    """Simple rule-based product selection (no LLM)."""
-    candidates = [
-        p for p in catalog
-        if p["category"] == category and p["price"] <= budget and p["availability"] == "in_stock"
-    ]
-    if not candidates:
-        return None
-    return min(candidates, key=lambda p: p["price"])
+    """Agentic selection: LLM intent parsing with rule-based fallback."""
+    product, how = intent.select_product(
+        catalog, budget=budget, category=category, brief=AGENT_GOAL
+    )
+    print(f"[buyer-agent] Selection mode: {how}")
+    return product
 
 
 def main():
@@ -128,7 +131,7 @@ def main():
     print(f"[buyer-agent] Merchant: {manifest['merchant_name']}")
     print(f"[buyer-agent] Catalog: {len(catalog)} products")
 
-    print(f"[buyer-agent] Picking product in '{CATEGORY}' under ₹{BUDGET // 100}...")
+    print(f"[buyer-agent] Choosing a product for goal: {AGENT_GOAL}")
     product = pick_product(catalog, BUDGET, CATEGORY)
     if not product:
         print("[buyer-agent] No matching product found. Exiting.")

@@ -65,6 +65,12 @@ services:
       AGENT_EMAIL: agent-001@buyer.local
       AGENT_TENANT: agent-001
       AGENT_PASSWORD: buyer-agent-secret
+      # Optional: set OPENROUTER_API_KEY to make the agent choose products via
+      # natural-language intent (LLM). Without it, the agent uses a transparent
+      # rule-based fallback. The money path stays deterministic either way.
+      OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+      OPENROUTER_MODEL: ${OPENROUTER_MODEL:-meta-llama/llama-3.1-8b-instruct:free}
+      AGENT_GOAL: ${AGENT_GOAL:-Pick a good electronics product that fits the shopper's needs and budget}
     depends_on:
       - gateway
       - redis

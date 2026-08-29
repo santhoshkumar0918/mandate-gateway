@@ -21,12 +21,17 @@ import sys
 import time
 import uuid
 
+import intent
+
 GATEWAY_URL = os.getenv("GATEWAY_URL", "http://localhost:8000")
 REDIS_URL = os.getenv("REDIS_URL")
 BUDGET = int(os.getenv("BUDGET", "50000"))
 CATEGORY = os.getenv("CATEGORY", "electronics")
 MERCHANT_ID = os.getenv("MERCHANT_ID", "merchant-001")
 SHIPPING_ADDRESS = os.getenv("SHIPPING_ADDRESS", "123 Demo Street, Bangalore")
+AGENT_GOAL = os.getenv(
+    "AGENT_GOAL", f"Pick a good {CATEGORY} product that fits the shopper's needs and budget"
+)
 
 AGENT_EMAIL = os.getenv("AGENT_EMAIL", "agent-001@buyer.local")
 AGENT_TENANT = os.getenv("AGENT_TENANT", "agent-001")
@@ -98,8 +103,13 @@ def run_once(api_key: str) -> list[dict]:
     if not candidates:
         events.append({"step": "pick", "result": "no_match"})
         return events
-    product = min(candidates, key=lambda p: p["price"])
-    events.append({"step": "pick", "product": product["title"]})
+    product, how = intent.select_product(
+        catalog, budget=BUDGET, category=CATEGORY, brief=AGENT_GOAL
+    )
+    if not product:
+        events.append({"step": "pick", "result": "no_match"})
+        return events
+    events.append({"step": "pick", "product": product["title"], "mode": how})
 
     mandate = _request(
         "POST",
