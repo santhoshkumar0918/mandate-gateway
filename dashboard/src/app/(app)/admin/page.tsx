@@ -69,6 +69,11 @@ export default function AdminPage() {
             accent={m.unresolved_mismatches > 0}
           />
           <Kpi label="Unresolved" value={String(m.unresolved_mismatches)} />
+          <Kpi
+            label="Unfulfilled"
+            value={String(m.unfulfilled_orders)}
+            accent={m.unfulfilled_orders > 0}
+          />
           <Kpi label="Merchants" value={String(m.merchants)} />
           <Kpi label="Agents" value={String(m.agents)} />
           <Kpi label="Admins" value={String(m.admins)} />

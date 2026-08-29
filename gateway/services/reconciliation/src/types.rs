@@ -41,7 +41,10 @@ pub struct Outcome {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Mismatch {
     pub mismatch_id: Uuid,
-    pub intent_id: Uuid,
+    /// The buyer intent this mismatch relates to. `None` for mismatch kinds
+    /// that have no buyer intent (e.g. fulfillment timeout on a merchant
+    /// order), which is why the column is nullable.
+    pub intent_id: Option<Uuid>,
     pub mandate_id: Uuid,
     pub kind: MismatchKind,
     pub status: MismatchStatus,
@@ -72,6 +75,11 @@ pub enum MismatchKind {
         expected: String,
         actual: String,
     },
+    /// Fulfillment timeout — an order was created but no proof of delivery
+    /// arrived within the SLA, so the spend is recovered (verify-then-pay).
+    FulfillmentTimeout {
+        order_id: String,
+    },
 }
 
 /// Lifecycle status of a mismatch.
@@ -89,7 +97,7 @@ pub enum MismatchStatus {
 
 impl Mismatch {
     /// Creates a new mismatch in Detected status.
-    pub fn new(intent_id: Uuid, mandate_id: Uuid, kind: MismatchKind) -> Self {
+    pub fn new(intent_id: Option<Uuid>, mandate_id: Uuid, kind: MismatchKind) -> Self {
         Self {
             mismatch_id: Uuid::new_v4(),
             intent_id,
@@ -111,7 +119,7 @@ mod tests {
     #[test]
     fn new_mismatch_is_detected() {
         let m = Mismatch::new(
-            Uuid::new_v4(),
+            Some(Uuid::new_v4()),
             Uuid::new_v4(),
             MismatchKind::PriceDrift {
                 expected: 100,

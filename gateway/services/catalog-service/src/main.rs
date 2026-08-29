@@ -687,7 +687,7 @@ async fn list_audit(
 struct MismatchResponse {
     mismatch_id: Uuid,
     mandate_id: Uuid,
-    intent_id: Uuid,
+    intent_id: Option<Uuid>,
     kind: serde_json::Value,
     status: String,
     refund_id: Option<String>,
@@ -738,6 +738,7 @@ struct AdminMetrics {
     blocked_decisions: i64,
     mismatches: i64,
     unresolved_mismatches: i64,
+    unfulfilled_orders: i64,
     merchants: i64,
     agents: i64,
     admins: i64,
@@ -768,6 +769,11 @@ async fn admin_metrics(
         "SELECT COUNT(*) FROM mismatches WHERE status <> 'refund_completed'",
     )
     .await?;
+    let unfulfilled_orders = count(
+        &state.db,
+        "SELECT COUNT(*) FROM orders o LEFT JOIN fulfillments f ON o.order_id = f.order_id WHERE f.order_id IS NULL",
+    )
+    .await?;
     let merchants = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'merchant'").await?;
     let agents = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'agent'").await?;
     let admins = count(&state.db, "SELECT COUNT(*) FROM accounts WHERE role = 'admin'").await?;
@@ -781,11 +787,51 @@ async fn admin_metrics(
         blocked_decisions,
         mismatches,
         unresolved_mismatches,
+        unfulfilled_orders,
         merchants,
         agents,
         admins,
         active_api_keys,
     }))
+}
+
+// ─── Reconciliation: fulfillment ingestion ──────────────────────────────
+
+#[derive(Deserialize)]
+struct FulfillmentIngest {
+    order_id: String,
+    /// Opaque proof of delivery: tracking number, delivery webhook, etc.
+    proof: String,
+}
+
+/// Merchant posts proof that an order was fulfilled. Marks the order delivered
+/// so the verify-then-pay sweep will not recover it. Idempotent.
+async fn ingest_fulfillment(
+    auth::AuthUser(claims): auth::AuthUser,
+    State(state): State<AppState>,
+    Json(body): Json<FulfillmentIngest>,
+) -> Result<Json<serde_json::Value>, (StatusCode, Json<ErrorResponse>)> {
+    if claims.role != "admin" && claims.role != "merchant" {
+        return Err((
+            StatusCode::FORBIDDEN,
+            Json(ErrorResponse {
+                error: "merchant or admin role required".into(),
+            }),
+        ));
+    }
+    state
+        .reconcile
+        .ingest_fulfillment(&body.order_id, &body.proof)
+        .await
+        .map_err(|e| {
+            (
+                StatusCode::INTERNAL_SERVER_ERROR,
+                Json(ErrorResponse {
+                    error: e.to_string(),
+                }),
+            )
+        })?;
+    Ok(Json(serde_json::json!({ "status": "fulfilled" })))
 }
 
 // ─── Auth handlers ───────────────────────────────────────────────────────
@@ -1077,6 +1123,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let merchant = db::merchant_repo::MerchantRepo::new(db.clone());
     let merchant_id = std::env::var("MERCHANT_ID").unwrap_or_else(|_| "merchant-001".into());
     let reconcile = ReconcileService::new(db.clone(), RazorpayRefundProvider(razorpay.clone()));
+    let reconcile_for_sweep = reconcile.clone();
 
     let state = AppState {
         db,
@@ -1091,6 +1138,21 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         rate_limiter: Arc::new(Mutex::new(HashMap::new())),
     };
 
+    // Background verify-then-pay sweep: recover orders with no fulfillment
+    // proof within the SLA. Independent of the request path.
+    tokio::spawn(async move {
+        let mut iv = tokio::time::interval(std::time::Duration::from_secs(30));
+        iv.tick().await; // consume the immediate first tick
+        loop {
+            iv.tick().await;
+            match reconcile_for_sweep.sweep_unfulfilled(240, "system").await {
+                Ok(n) if n > 0 => tracing::info!(recovered = n, "reconciliation: fulfillment-timeout sweep"),
+                Ok(_) => {}
+                Err(e) => tracing::error!(error = %e, "reconciliation: sweep failed"),
+            }
+        }
+    });
+
     let app = Router::new()
         .route("/manifest", get(get_manifest))
         .route("/catalog", get(get_catalog_cached))
@@ -1103,6 +1165,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/audit", get(list_audit))
         .route("/audit/{mandate_id}", get(get_audit_trail))
         .route("/reconciliation/mismatches", get(list_mismatches))
+        .route("/reconciliation/ingest-fulfillment", post(ingest_fulfillment))
         .route("/admin/metrics", get(admin_metrics))
         .route("/admin/simulate-drift", post(simulate_drift))
         .route("/auth/signup", post(signup))

@@ -1621,6 +1621,7 @@ dependencies = [
  "razorpay-client",
  "serde",
  "serde_json",
+ "sqlx",
  "thiserror",
  "tokio",
  "tracing",

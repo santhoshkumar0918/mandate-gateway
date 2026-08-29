@@ -1,4 +1,5 @@
 use db::PgPool;
+use db::order_repo::OrderRow;
 
 use crate::error::ReconciliationError;
 use crate::matcher::MismatchDetector;
@@ -182,6 +183,94 @@ impl<P: RefundProvider + Clone> ReconcileService<P> {
 
         Ok(())
     }
+
+    /// Records merchant-provided proof of fulfillment for an order.
+    ///
+    /// Idempotent: re-submitting updates the proof and marks the order
+    /// delivered. This is the "verify" half of verify-then-pay — once proof
+    /// exists, the spend is considered finally settled and the fulfillment
+    /// timeout sweep will ignore the order.
+    pub async fn ingest_fulfillment(
+        &self,
+        order_id: &str,
+        proof: &str,
+    ) -> Result<(), ReconciliationError> {
+        sqlx::query(
+            r#"INSERT INTO fulfillments (order_id, mandate_id, status, proof, fulfilled_at)
+               VALUES ($1, (SELECT mandate_id FROM orders WHERE order_id = $1), 'fulfilled', $2, NOW())
+               ON CONFLICT (order_id) DO UPDATE SET status = 'fulfilled', proof = $2, fulfilled_at = NOW()"#,
+        )
+        .bind(order_id)
+        .bind(proof)
+        .execute(&self.db)
+        .await
+        .map_err(|e| ReconciliationError::Db(db::DbError::from(e)))?;
+        Ok(())
+    }
+
+    /// Background sweep implementing verify-then-pay recovery.
+    ///
+    /// Finds orders that were created but never received fulfillment proof
+    /// within `sla_seconds`, treats each as a detected mismatch, and drives it
+    /// through the same idempotent refund path as price-drift recovery. Returns
+    /// the number of orders recovered this pass.
+    pub async fn sweep_unfulfilled(
+        &self,
+        sla_seconds: i64,
+        actor: &str,
+    ) -> Result<usize, ReconciliationError> {
+        let orders = sqlx::query_as::<_, OrderRow>(
+            r#"SELECT o.* FROM orders o
+               LEFT JOIN fulfillments f ON o.order_id = f.order_id
+               WHERE f.order_id IS NULL
+                 AND o.created_at < NOW() - ($1 || ' seconds')::interval"#,
+        )
+        .bind(sla_seconds)
+        .fetch_all(&self.db)
+        .await
+        .map_err(|e| ReconciliationError::Db(db::DbError::from(e)))?;
+
+        let mut recovered = 0;
+        for o in orders {
+            // Dedupe: only act if no FulfillmentTimeout mismatch already exists
+            // for this order. Without this, every sweep tick would open a new
+            // mismatch (and re-attempt the refund) for a still-unfulfilled order.
+            let existing = sqlx::query_scalar::<_, i64>(
+                "SELECT COUNT(*) FROM mismatches \
+                 WHERE mandate_id = $1 \
+                   AND kind->'FulfillmentTimeout'->>'order_id' = $2",
+            )
+            .bind(o.mandate_id)
+            .bind(&o.order_id)
+            .fetch_one(&self.db)
+            .await
+            .map_err(|e| ReconciliationError::Db(db::DbError::from(e)))?;
+            if existing > 0 {
+                continue;
+            }
+
+            let outcome = Outcome {
+                order_id: o.order_id.clone(),
+                payment_id: String::new(),
+                product_id: String::new(),
+                actual_price: o.amount,
+                currency: o.currency.clone(),
+                completed_at: o.created_at,
+            };
+            let m = Mismatch::new(
+                None,
+                o.mandate_id,
+                MismatchKind::FulfillmentTimeout {
+                    order_id: o.order_id.clone(),
+                },
+            );
+            // Mirror the reconcile_purchase recovery path exactly.
+            self.persist_detected(&m, actor).await?;
+            self.trigger_refund(&outcome, &m, actor).await?;
+            recovered += 1;
+        }
+        Ok(recovered)
+    }
 }
 
 fn describe_kind(kind: &MismatchKind) -> String {
@@ -194,6 +283,9 @@ fn describe_kind(kind: &MismatchKind) -> String {
         }
         MismatchKind::CategoryMismatch { expected, actual } => {
             format!("category mismatch: expected {} but got {}", expected, actual)
+        }
+        MismatchKind::FulfillmentTimeout { order_id } => {
+            format!("fulfillment timeout: no delivery proof for order {} within SLA", order_id)
         }
     }
 }

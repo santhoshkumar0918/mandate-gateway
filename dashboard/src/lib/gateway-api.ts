@@ -246,7 +246,7 @@ export async function getAuditFeed(
 export interface Mismatch {
   mismatch_id: string;
   mandate_id: string;
-  intent_id: string;
+  intent_id: string | null;
   kind: Record<string, unknown>;
   status: string;
   refund_id: string | null;
@@ -270,6 +270,7 @@ export interface AdminMetrics {
   blocked_decisions: number;
   mismatches: number;
   unresolved_mismatches: number;
+  unfulfilled_orders: number;
   merchants: number;
   agents: number;
   admins: number;

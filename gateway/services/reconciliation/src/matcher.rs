@@ -23,7 +23,7 @@ impl MismatchDetector {
         // Price drift — the core engineered failure scenario
         if intent.expected_price != outcome.actual_price {
             mismatches.push(Mismatch::new(
-                intent.intent_id,
+                Some(intent.intent_id),
                 intent.mandate_id,
                 MismatchKind::PriceDrift {
                     expected: intent.expected_price,
@@ -35,7 +35,7 @@ impl MismatchDetector {
         // Wrong product
         if intent.product_id != outcome.product_id {
             mismatches.push(Mismatch::new(
-                intent.intent_id,
+                Some(intent.intent_id),
                 intent.mandate_id,
                 MismatchKind::WrongProduct {
                     expected: intent.product_id.clone(),

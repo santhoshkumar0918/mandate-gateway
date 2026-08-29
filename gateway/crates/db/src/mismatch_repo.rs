@@ -7,7 +7,7 @@ use crate::error::DbError;
 pub async fn insert(
     pool: &PgPool,
     mismatch_id: Uuid,
-    intent_id: Uuid,
+    intent_id: Option<Uuid>,
     mandate_id: Uuid,
     kind: &serde_json::Value,
     status: &str,
@@ -61,7 +61,7 @@ pub async fn update_status(
 #[derive(Debug, sqlx::FromRow)]
 pub struct MismatchRow {
     pub mismatch_id: Uuid,
-    pub intent_id: Uuid,
+    pub intent_id: Option<Uuid>,
     pub mandate_id: Uuid,
     pub kind: serde_json::Value,
     pub status: String,
