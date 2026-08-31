@@ -179,6 +179,8 @@ async fn reconciliation_detects_drift_and_issues_refund() {
         &intent.category,
         intent.expected_price,
         &intent.currency,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -269,6 +271,8 @@ async fn reconciliation_is_idempotent_no_double_refund() {
         &intent.category,
         intent.expected_price,
         &intent.currency,
+        None,
+        None,
     )
     .await
     .unwrap();
@@ -315,6 +319,113 @@ async fn reconciliation_is_idempotent_no_double_refund() {
         1,
         "idempotency violated: double refund issued"
     );
+}
+
+/// Verify-then-pay: an order with no fulfillment proof beyond the SLA is
+/// recovered, and recovery is *money-aware*. An order that was never charged
+/// (no captured payment) is released — nothing to refund. An order with a
+/// captured payment is refunded through the idempotent path.
+#[tokio::test]
+async fn fulfillment_timeout_unpaid_released_paid_refunded() {
+    let pool = test_pool().await;
+    let refund_counter = std::sync::Arc::new(std::sync::atomic::AtomicU32::new(0));
+    let svc = ReconcileService::new(pool.clone(), FakeRefundProvider { counter: refund_counter.clone() });
+
+    // Branch 1: order created but never charged → released, no refund.
+    let (_signer, m1) = make_signed_mandate();
+    let order_unpaid = format!("order-ft-unpaid-{}", uuid::Uuid::new_v4());
+    db::mandate_repo::insert(&pool, &m1).await.unwrap();
+    db::order_repo::insert(&pool, &order_unpaid, m1.mandate_id, 399_900, "INR", "created", None)
+        .await
+        .unwrap();
+    sqlx::query("UPDATE orders SET created_at = NOW() - interval '600 seconds' WHERE order_id = $1")
+        .bind(&order_unpaid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    svc.sweep_unfulfilled(240, "system").await.unwrap();
+    let rows = db::mismatch_repo::find_by_mandate(&pool, m1.mandate_id).await.unwrap();
+    assert_eq!(rows.len(), 1, "unpaid order still detected as a mismatch");
+    assert_eq!(rows[0].status, "released", "unpaid order must be released, not refunded");
+    assert!(rows[0].kind.get("FulfillmentTimeout").is_some());
+    assert_eq!(refund_counter.load(std::sync::atomic::Ordering::SeqCst), 0, "no refund for unpaid order");
+
+    // Branch 2: order with a captured payment → refunded.
+    let (_signer2, m2) = make_signed_mandate();
+    let order_paid = format!("order-ft-paid-{}", uuid::Uuid::new_v4());
+    let payment_id = format!("pay-ft-{}", uuid::Uuid::new_v4());
+    db::mandate_repo::insert(&pool, &m2).await.unwrap();
+    db::order_repo::insert(&pool, &order_paid, m2.mandate_id, 399_900, "INR", "paid", None)
+        .await
+        .unwrap();
+    db::payment_repo::insert(
+        &pool,
+        &db::payment_repo::InsertPaymentParams {
+            payment_id: &payment_id,
+            order_id: &order_paid,
+            mandate_id: m2.mandate_id,
+            amount: 399_900,
+            currency: "INR",
+            status: "captured",
+            method: Some("card"),
+            captured: true,
+        },
+    )
+    .await
+    .unwrap();
+    sqlx::query("UPDATE orders SET created_at = NOW() - interval '600 seconds' WHERE order_id = $1")
+        .bind(&order_paid)
+        .execute(&pool)
+        .await
+        .unwrap();
+    svc.sweep_unfulfilled(240, "system").await.unwrap();
+    let rows = db::mismatch_repo::find_by_mandate(&pool, m2.mandate_id).await.unwrap();
+    assert_eq!(rows.len(), 1, "paid order detected as a mismatch");
+    assert_eq!(
+        rows[0].status,
+        "refund_completed",
+        "captured order must be refunded"
+    );
+    assert!(rows[0].refund_id.is_some(), "refund_id recorded");
+    assert_eq!(refund_counter.load(std::sync::atomic::Ordering::SeqCst), 1, "exactly one refund");
+
+    // Dedupe guard: a second sweep must not open a second mismatch for either order.
+    svc.sweep_unfulfilled(240, "system").await.unwrap();
+    assert_eq!(
+        db::mismatch_repo::find_by_mandate(&pool, m1.mandate_id).await.unwrap().len(),
+        1,
+        "unpaid order not re-recovered"
+    );
+    assert_eq!(
+        db::mismatch_repo::find_by_mandate(&pool, m2.mandate_id).await.unwrap().len(),
+        1,
+        "paid order not re-recovered"
+    );
+    assert_eq!(refund_counter.load(std::sync::atomic::Ordering::SeqCst), 1, "no double refund");
+
+    // Posting fulfillment settles a fresh order so it is no longer recoverable.
+    let (_signer3, m3) = make_signed_mandate();
+    let order_fulfilled = format!("order-ft-full-{}", uuid::Uuid::new_v4());
+    db::mandate_repo::insert(&pool, &m3).await.unwrap();
+    db::order_repo::insert(&pool, &order_fulfilled, m3.mandate_id, 399_900, "INR", "created", None)
+        .await
+        .unwrap();
+    svc.ingest_fulfillment(&order_fulfilled, "tracking-123").await.unwrap();
+    sqlx::query("UPDATE orders SET created_at = NOW() - interval '600 seconds' WHERE order_id = $1")
+        .bind(&order_fulfilled)
+        .execute(&pool)
+        .await
+        .unwrap();
+    // Posting fulfillment means the verify-then-pay sweep will not treat it as
+    // a timeout; the fulfillment row stands as proof of delivery.
+    let f = sqlx::query_scalar::<_, String>(
+        "SELECT status FROM fulfillments WHERE order_id = $1",
+    )
+    .bind(&order_fulfilled)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(f, "fulfilled");
 }
 }
 
