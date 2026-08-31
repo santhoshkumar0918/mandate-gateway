@@ -10,6 +10,7 @@ function StatusBadge({ status }: { status: string }) {
     detected: "bg-destructive/15 text-destructive",
     refund_initiated: "bg-amber-400/15 text-amber-300",
     refund_completed: "bg-accent/15 text-accent",
+    released: "bg-muted/40 text-muted-foreground",
   };
   return (
     <span className={`rounded-full px-2 py-0.5 text-xs ${map[status] ?? "bg-muted text-foreground"}`}>
@@ -43,7 +44,9 @@ export default function ReconciliationPage() {
     return () => clearInterval(t);
   }, [load]);
 
-  const open = items.filter((m) => m.status !== "refund_completed");
+  const open = items.filter(
+    (m) => m.status !== "refund_completed" && m.status !== "released"
+  );
 
   return (
     <div className="mx-auto max-w-4xl">
