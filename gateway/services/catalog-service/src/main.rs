@@ -129,6 +129,11 @@ struct PurchaseRequest {
     /// Reconciliation charges the live catalog price and compares it against
     /// this expected price to detect drift.
     expected_price: i64,
+    /// Short explanation of why the agent selected this product (LLM
+    /// reasoning). Optional; recorded on the intent for observability.
+    reasoning: Option<String>,
+    /// How the agent chose: "llm" or "rule-based". Optional.
+    selection_method: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -524,15 +529,29 @@ async fn execute_purchase(
     //    price actually charged to detect drift.
     let intent_id = Uuid::new_v4();
     let expected_price = body.expected_price * body.quantity;
-    db::intent_repo::insert(&state.db, intent_id, mandate.mandate_id,
-        &body.product_id, &auth.category, expected_price, &mandate.currency).await
-        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+    db::intent_repo::insert(
+        &state.db,
+        intent_id,
+        mandate.mandate_id,
+        &body.product_id,
+        &auth.category,
+        expected_price,
+        &mandate.currency,
+        body.reasoning.as_deref(),
+        body.selection_method.as_deref(),
+    )
+    .await
+    .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     // 8. Create order via Razorpay at the live (possibly drifted) price
     let receipt = mandate.mandate_id.to_string();
     let order = state.razorpay.create_order(
         order_amount, &mandate.currency, Some(&receipt),
     ).await.map_err(|e| (StatusCode::BAD_GATEWAY, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // Link the intent to the order it produced (order_id is only known now).
+    db::intent_repo::link_to_order(&state.db, intent_id, &order.id).await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
     db::order_repo::insert(&state.db, &order.id, mandate.mandate_id,
         order_amount, &mandate.currency, &order.status, Some(&receipt)).await
@@ -692,6 +711,51 @@ struct MismatchResponse {
     status: String,
     refund_id: Option<String>,
     detected_at: chrono::DateTime<Utc>,
+}
+
+#[derive(Serialize)]
+struct OrderView {
+    order_id: String,
+    mandate_id: Uuid,
+    amount: i64,
+    currency: String,
+    status: String,
+    created_at: chrono::DateTime<Utc>,
+    fulfillment: String,
+    product_id: Option<String>,
+    category: Option<String>,
+    reasoning: Option<String>,
+    selection_method: Option<String>,
+}
+
+/// Merchant/admin view of orders with fulfillment status + the buyer intent
+/// (product, reasoning) that produced each.
+async fn list_orders(
+    auth::AuthUser(_claims): auth::AuthUser,
+    State(state): State<AppState>,
+) -> Result<Json<Vec<OrderView>>, (StatusCode, Json<ErrorResponse>)> {
+    let rows = db::order_repo::list_recent(&state.db, 100)
+        .await
+        .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    let items = rows
+        .into_iter()
+        .map(|r| OrderView {
+            fulfillment: if r.fulfilled_at.is_some() { "fulfilled".to_string() } else { "unfulfilled".to_string() },
+            order_id: r.order_id,
+            mandate_id: r.mandate_id,
+            amount: r.amount,
+            currency: r.currency,
+            status: r.status,
+            created_at: r.created_at,
+            product_id: r.product_id,
+            category: r.category,
+            reasoning: r.reasoning,
+            selection_method: r.selection_method,
+        })
+        .collect();
+
+    Ok(Json(items))
 }
 
 /// Operator view of intent-vs-outcome mismatches (reconciliation).
@@ -1164,6 +1228,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         .route("/mandate/revoke", post(revoke_mandate))
         .route("/audit", get(list_audit))
         .route("/audit/{mandate_id}", get(get_audit_trail))
+        .route("/orders", get(list_orders))
         .route("/reconciliation/mismatches", get(list_mismatches))
         .route("/reconciliation/ingest-fulfillment", post(ingest_fulfillment))
         .route("/admin/metrics", get(admin_metrics))
