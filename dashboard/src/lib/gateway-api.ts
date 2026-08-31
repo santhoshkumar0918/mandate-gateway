@@ -262,6 +262,29 @@ export async function getMismatches(token: string): Promise<Mismatch[]> {
   return res.json();
 }
 
+export interface Order {
+  order_id: string;
+  mandate_id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  created_at: string;
+  fulfillment: "fulfilled" | "unfulfilled";
+  product_id: string | null;
+  category: string | null;
+  reasoning: string | null;
+  selection_method: string | null;
+}
+
+export async function getOrders(token: string): Promise<Order[]> {
+  const res = await fetch(`${GATEWAY_URL}/orders`, {
+    headers: authHeader(token),
+    cache: "no-store",
+  });
+  if (!res.ok) throw new Error(`Failed to load orders: ${res.status}`);
+  return res.json();
+}
+
 export interface AdminMetrics {
   total_mandates: number;
   active_mandates: number;
