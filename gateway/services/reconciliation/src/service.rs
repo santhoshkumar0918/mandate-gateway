@@ -1,10 +1,25 @@
 use db::PgPool;
-use db::order_repo::OrderRow;
+use sqlx::FromRow;
 
 use crate::error::ReconciliationError;
 use crate::matcher::MismatchDetector;
 use crate::refund_provider::RefundProvider;
 use crate::types::{Intent, Mismatch, MismatchKind, Outcome};
+
+/// A row for the verify-then-pay sweep: an order that was created but never
+/// fulfilled, joined to whether any captured payment exists for it.
+///
+/// `has_captured_payment` distinguishes an order that moved real money (and is
+/// therefore refundable) from one that was never charged (nothing to refund).
+#[derive(FromRow)]
+struct UnfulfilledOrderRow {
+    order_id: String,
+    mandate_id: uuid::Uuid,
+    amount: i64,
+    currency: String,
+    created_at: chrono::DateTime<chrono::Utc>,
+    payment_id: Option<String>,
+}
 
 /// Orchestrates intent-vs-outcome reconciliation and recovery.
 ///
@@ -212,15 +227,27 @@ impl<P: RefundProvider + Clone> ReconcileService<P> {
     ///
     /// Finds orders that were created but never received fulfillment proof
     /// within `sla_seconds`, treats each as a detected mismatch, and drives it
-    /// through the same idempotent refund path as price-drift recovery. Returns
-    /// the number of orders recovered this pass.
+    /// through recovery. Returns the number of orders recovered this pass.
+    ///
+    /// A refund is only ever attempted for an order that has a **captured**
+    /// payment — that is the money we are actually returning. An order that
+    /// was never charged is *released* (terminal `Released` status, no refund
+    /// call) because there is nothing to return. This is what keeps the
+    /// verify-then-pay sweep from inventing a payment record for orders that
+    /// never moved money.
     pub async fn sweep_unfulfilled(
         &self,
         sla_seconds: i64,
         actor: &str,
     ) -> Result<usize, ReconciliationError> {
-        let orders = sqlx::query_as::<_, OrderRow>(
-            r#"SELECT o.* FROM orders o
+        let orders = sqlx::query_as::<_, UnfulfilledOrderRow>(
+            r#"SELECT o.order_id, o.mandate_id, o.amount, o.currency, o.created_at,
+                      EXISTS (SELECT 1 FROM payments p
+                              WHERE p.order_id = o.order_id AND p.captured) AS has_captured_payment,
+                      (SELECT p.payment_id FROM payments p
+                       WHERE p.order_id = o.order_id AND p.captured
+                       LIMIT 1) AS payment_id
+               FROM orders o
                LEFT JOIN fulfillments f ON o.order_id = f.order_id
                WHERE f.order_id IS NULL
                  AND o.created_at < NOW() - ($1 || ' seconds')::interval"#,
@@ -249,14 +276,6 @@ impl<P: RefundProvider + Clone> ReconcileService<P> {
                 continue;
             }
 
-            let outcome = Outcome {
-                order_id: o.order_id.clone(),
-                payment_id: String::new(),
-                product_id: String::new(),
-                actual_price: o.amount,
-                currency: o.currency.clone(),
-                completed_at: o.created_at,
-            };
             let m = Mismatch::new(
                 None,
                 o.mandate_id,
@@ -264,12 +283,62 @@ impl<P: RefundProvider + Clone> ReconcileService<P> {
                     order_id: o.order_id.clone(),
                 },
             );
-            // Mirror the reconcile_purchase recovery path exactly.
             self.persist_detected(&m, actor).await?;
-            self.trigger_refund(&outcome, &m, actor).await?;
+
+            match o.payment_id {
+                Some(payment_id) => {
+                    // Captured money exists — refund it through the idempotent path.
+                    let outcome = Outcome {
+                        order_id: o.order_id.clone(),
+                        payment_id,
+                        product_id: String::new(),
+                        actual_price: o.amount,
+                        currency: o.currency.clone(),
+                        completed_at: o.created_at,
+                    };
+                    self.trigger_refund(&outcome, &m, actor).await?;
+                }
+                None => {
+                    // Never charged — nothing to refund. Release the order.
+                    self.release_unpaid(&m, &o.order_id, actor).await?;
+                }
+            }
             recovered += 1;
         }
         Ok(recovered)
+    }
+
+    /// Marks a detected mismatch `Released` because the order was created but
+    /// never fulfilled and never charged, so there is no money to recover.
+    /// Terminal state, audited so the decision is explainable.
+    async fn release_unpaid(
+        &self,
+        m: &Mismatch,
+        order_id: &str,
+        actor: &str,
+    ) -> Result<(), ReconciliationError> {
+        sqlx::query(
+            "UPDATE mismatches SET status = 'released' WHERE mismatch_id = $1",
+        )
+        .bind(m.mismatch_id)
+        .execute(&self.db)
+        .await
+        .map_err(|e| ReconciliationError::Db(db::DbError::from(e)))?;
+
+        db::audit_repo::append(
+            &self.db,
+            &db::audit_repo::AuditParams {
+                event_type: "order_released",
+                mandate_id: Some(m.mandate_id),
+                entity_id: order_id,
+                decision: "block",
+                reason: Some("order unfulfilled and unpaid within SLA — no charge to refund"),
+                detail: Some(serde_json::json!({ "order_id": order_id })),
+                actor,
+            },
+        )
+        .await?;
+        Ok(())
     }
 }
 

@@ -93,6 +93,12 @@ pub enum MismatchStatus {
     Detected,
     RefundInitiated,
     RefundCompleted,
+    /// Recovery for an order that was created but never fulfilled AND never
+    /// paid — nothing was captured, so no refund is owed. The order is
+    /// released and the mismatch is a terminal (resolved) state, not an
+    /// outstanding debt. Only orders with a captured payment proceed to a
+    /// refund.
+    Released,
 }
 
 impl Mismatch {
