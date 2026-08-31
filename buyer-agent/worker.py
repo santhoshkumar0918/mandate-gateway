@@ -103,13 +103,13 @@ def run_once(api_key: str) -> list[dict]:
     if not candidates:
         events.append({"step": "pick", "result": "no_match"})
         return events
-    product, how = intent.select_product(
+    product, method, reasoning = intent.select_product(
         catalog, budget=BUDGET, category=CATEGORY, brief=AGENT_GOAL
     )
     if not product:
         events.append({"step": "pick", "result": "no_match"})
         return events
-    events.append({"step": "pick", "product": product["title"], "mode": how})
+    events.append({"step": "pick", "product": product["title"], "mode": method, "reasoning": reasoning})
 
     mandate = _request(
         "POST",
@@ -128,18 +128,18 @@ def run_once(api_key: str) -> list[dict]:
         return events
     events.append({"step": "mandate", "mandate_id": mandate["mandate_id"]})
 
-    result = _request(
-        "POST",
-        "/purchase",
-        {
-            "mandate_id": mandate["mandate_id"],
-            "product_id": product["product_id"],
-            "quantity": 1,
-            "shipping_address": SHIPPING_ADDRESS,
-            "expected_price": product["price"],
-        },
-        token=api_key,
-    )
+    body = {
+        "mandate_id": mandate["mandate_id"],
+        "product_id": product["product_id"],
+        "quantity": 1,
+        "shipping_address": SHIPPING_ADDRESS,
+        "expected_price": product["price"],
+    }
+    if reasoning:
+        body["reasoning"] = reasoning
+    if method:
+        body["selection_method"] = method
+    result = _request("POST", "/purchase", body, token=api_key)
     events.append({"step": "purchase", "status": result.get("status"), "order_id": result.get("order_id")})
     return events
 

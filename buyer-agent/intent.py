@@ -37,9 +37,13 @@ def _rule_based(catalog, budget, category):
         and p.get("availability") == "in_stock"
     ]
     if not cands:
-        return None, "no in-stock product matched the category/budget"
+        return None, "rule-based", "no in-stock product matched the category/budget"
     p = min(cands, key=lambda p: p["price"])
-    return p, "rule-based: cheapest in-category in-stock match"
+    return (
+        p,
+        "rule-based",
+        f"cheapest in-category in-stock match at Rs{p['price']/100:.2f}",
+    )
 
 
 def _catalog_block(catalog, budget, category):
@@ -101,18 +105,18 @@ def _llm_select(catalog, api_key, budget, category, brief):
         raise RuntimeError("llm breached budget")
     if product.get("availability") != "in_stock":
         raise RuntimeError("llm chose out-of-stock item")
-    return product, f"llm: {guess.get('reason', '')}"
+    return product, "llm", guess.get("reason", "llm match within budget")
 
 
 def select_product(
     catalog, *, budget: int, category: str, brief: Optional[str] = None
-) -> Tuple[Optional[dict], str]:
-    """Return (product, how_it_was_chosen). Never raises — always degrades safely."""
+) -> Tuple[Optional[dict], str, str]:
+    """Return (product, method, reasoning). Never raises — degrades safely."""
     api_key = os.getenv("OPENROUTER_API_KEY")
     if api_key:
         try:
-            return _llm_select(catalog, api_key, budget, category, brief or ""), "llm"
+            return _llm_select(catalog, api_key, budget, category, brief or "")
         except Exception as exc:  # model must never break the purchase loop
-            p, why = _rule_based(catalog, budget, category)
-            return p, f"llm unavailable ({exc}); {why}"
+            p, method, why = _rule_based(catalog, budget, category)
+            return p, method, f"llm unavailable ({exc}); {why}"
     return _rule_based(catalog, budget, category)

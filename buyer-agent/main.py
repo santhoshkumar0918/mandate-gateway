@@ -104,7 +104,7 @@ def request_mandate(api_key, product):
     return _request("POST", "/mandate", body, token=api_key)
 
 
-def execute_purchase(api_key, mandate, product):
+def execute_purchase(api_key, mandate, product, reasoning=None, selection_method=None):
     """Execute the purchase via the gateway (key-authenticated)."""
     body = {
         "mandate_id": mandate["mandate_id"],
@@ -113,16 +113,23 @@ def execute_purchase(api_key, mandate, product):
         "shipping_address": SHIPPING_ADDRESS,
         "expected_price": product["price"],
     }
+    if reasoning:
+        body["reasoning"] = reasoning
+    if selection_method:
+        body["selection_method"] = selection_method
     return _request("POST", "/purchase", body, token=api_key)
 
 
 def pick_product(catalog, budget, category):
-    """Agentic selection: LLM intent parsing with rule-based fallback."""
-    product, how = intent.select_product(
+    """Agentic selection: LLM intent parsing with rule-based fallback.
+
+    Returns (product, selection_method, reasoning).
+    """
+    product, method, reasoning = intent.select_product(
         catalog, budget=budget, category=category, brief=AGENT_GOAL
     )
-    print(f"[buyer-agent] Selection mode: {how}")
-    return product
+    print(f"[buyer-agent] Selection mode: {method} — {reasoning}")
+    return product, method, reasoning
 
 
 def main():
@@ -132,7 +139,7 @@ def main():
     print(f"[buyer-agent] Catalog: {len(catalog)} products")
 
     print(f"[buyer-agent] Choosing a product for goal: {AGENT_GOAL}")
-    product = pick_product(catalog, BUDGET, CATEGORY)
+    product, selection_method, reasoning = pick_product(catalog, BUDGET, CATEGORY)
     if not product:
         print("[buyer-agent] No matching product found. Exiting.")
         return
@@ -152,7 +159,7 @@ def main():
     print(f"[buyer-agent] Mandate issued: {mandate['mandate_id']}")
 
     print("[buyer-agent] Executing purchase...")
-    result = execute_purchase(api_key, mandate, product)
+    result = execute_purchase(api_key, mandate, product, reasoning, selection_method)
     if "error" in result:
         print(f"[buyer-agent] Purchase failed: {result['error']}")
         return
