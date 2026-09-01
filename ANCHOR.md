@@ -6,7 +6,7 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-29 — verify-then-pay reconciliation engine + LLM buyer-agent + protocol artifact (architecture deepening after "ideas not implemented" review).
+**Last updated:** 2026-08-31 — per-order fulfillment + intent observability surfaced in-product; verify-then-pay sweep made money-aware (release unpaid, refund only captured).
 
 ## Current phase
 
@@ -298,6 +298,60 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       reconciliation, audit trail, scaling, threat model. The "protocol"
       claim now has a concrete written spec behind it.
 
+ 6. **Per-order fulfillment + intent observability (orders view)** (this
+    session, slice-1): the new engine and the LLM agent are now visible
+    in-product, not just in aggregate KPIs.
+    - Migration `010_intent_meta.sql`: `intents` gains `reasoning`,
+      `selection_method`, and nullable `order_id` (link back to the order an
+      intent produced).
+    - `intent_repo::insert` extended with reasoning/selection_method;
+      `intent_repo::link_to_order` records which Razorpay order an intent
+      produced once that id exists (known only after order creation).
+    - `order_repo::list_recent` + `OrderViewRow`: orders LEFT JOINed with
+      their fulfillment row (fulfilled_at, proof) and buyer intent (product,
+      category, reasoning, selection_method).
+    - Gateway `GET /orders` (AuthUser) returns `OrderView[]` with per-order
+      `fulfillment` = "fulfilled"/"unfulfilled"; `PurchaseRequest` carries
+      optional `reasoning`/`selection_method` and `execute_purchase` passes
+      them through + links the intent to the order (which also backfills the
+      existing intent rows via order_amount match).
+    - Buyer-agent: `select_product` now returns `(product, method,
+      reasoning)`; both LLM and rule-based paths report how + why; the
+      purchase body sends reasoning/selection_method.
+    - Dashboard: new `/orders` page (fulfillment badge, category chip,
+      reasoning quote, unfulfilled alert banner), nav item, `package` icon,
+      `getOrders` in the API client. `npm run build` clean.
+    - Fixed a pre-existing bug: `buyer-agent/Dockerfile` never copied
+      `intent.py`, so the rebuilt worker crashed at startup with
+      `ModuleNotFoundError` — COPY now includes it (`96444ce`).
+
+ 7. **Verify-then-pay sweep made money-aware (option B)** (this session):
+    the sweep previously refunded every unfulfilled order with an empty
+    `payment_id`, which violated the `refunds`.`payment_id` FK to `payments`
+    and left mismatches stuck in `detected`. Decided with the user: refund
+    only orders with a **captured** payment; never-charged orders are
+    *released* (no refund, nothing to return).
+    - `MismatchStatus::Released` (terminal) + `release_unpaid` (audited as
+      `order_released`); `sweep_unfulfilled` now joins `payments` and refunds
+      only when a captured payment exists.
+    - Migration `011_mismatch_released.sql`: widen mismatches status check to
+      include `released`.
+    - Dashboard reconciliation: `released` is resolved (excluded from the
+      unreconciled count) with a neutral badge.
+    - Integration test `fulfillment_timeout_unpaid_released_paid_refunded`
+      covers both branches + dedupe; all 10 integration tests pass against an
+      isolated `mandate_gateway_test` DB. (Two pre-existing
+      `intent_repo::insert` call sites updated for the new args.)
+    - Live: 82 stuck `detected` FulfillmentTimeout mismatches (bug side
+      effect) migrated to `released` with audit entries; new sweep runs clean
+      (no refund_failed since upgrade); `/orders` + `/reconciliation/mismatches`
+      return released state + fulfillment/reasoning. Gateway clippy clean.
+    - Commits: `c5a9bed` db intent_repo, `4a6631c` db order_repo,
+      `71f4b7d` migration 010, `242f28a` gateway /orders, `5203128` buyer-agent,
+      `ef6bf8a` reconciliation money-aware, `a806158` migration 011,
+      `58ee651` dashboard orders page, `638a43e` dashboard released-resolved,
+      `6743592` tests, plus `96444ce` Dockerfile fix.
+
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
  0 remaining tracer-bullet vertical slices. **Backlog complete — all 14
@@ -333,21 +387,21 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-Architecture deepening (user said the product "looks basic" and "ideas
-aren't implemented"): the prototype-claimed capabilities are now actually
-built and running — the buyer agent uses an LLM (with fallback), the
-verify-then-pay reconciliation engine is real (not just a demo button), and
-the protocol has a written spec. All shipped this session and committed.
+None — the current slice (per-order fulfillment + intent observability, and
+the money-aware verify-then-pay sweep) is shipped, committed, pushed, and
+live-verified.
 
 Outstanding product-depth opportunities (not yet done — candidate next
 steps if the user wants more):
-- Surface per-order fulfillment status in the merchant console (show which
-  orders are unfulfilled / recovered), not just the aggregate admin KPI.
-- Make the LLM agent's selection visible in the Agent Console (show the
-  parsed intent + reasoning), so the "agent thinks" is observable.
-- Add a real captured-payment path so test-mode refunds in the sweep
-  succeed (currently orders stay `created`; the sweep's refund attempt
-  errors by design in test mode).
+- Add a real captured-payment path so test-mode sweep refunds actually
+  succeed. Today orders stay `created` with no payment row, so the sweep
+  releases them (nothing to refund) rather than exercising the refund arm.
+  Wiring a Razorpay capture (or a test-mode captured payment) would let the
+  sweep's refund path be exercised live.
+- Record a short demo video / one-page judge walkthrough: sign in as the
+  demo merchant → watch Overview KPIs + live agent activity → open Orders to
+  see fulfillment + the agent's reasoning → Reconciliation to see a
+  verify-then-pay recovery in action.
 - DONE: Added `scripts/seed_demo.py` (idempotent) that creates a demo merchant
   mapped to `merchant-001` (the live catalog owner) + a demo admin + a scoped
   agent key + one immediate purchase + a reconciliation mismatch. Run AFTER
@@ -384,15 +438,14 @@ Nothing is off-limits.
 
 ## Next task
 
-Decide the next depth slice with the user (the "basic / not-implemented"
-review is addressed for the three headline ideas; the product can go
-deeper). Candidates, in priority order:
-1. Surface per-order fulfillment status + the LLM agent's parsed intent in
-   the dashboards (makes the new engine + agent observable in-product).
-2. Wire a real captured-payment path so sweep refunds succeed in test mode.
-3. Record a short demo video / one-page judge walkthrough: sign in as the
-   demo merchant → watch Overview KPIs + live agent activity → open
-   Reconciliation to see a verify-then-pay recovery in action.
+Decide the next depth slice with the user. Candidates, in priority order:
+1. Wire a real captured-payment path so the sweep's refund arm is exercised
+   live (today unpaid orders are released, which is correct but means the
+   refund path only runs in tests).
+2. Record a short demo video / one-page judge walkthrough: sign in as the
+   demo merchant → watch Overview KPIs + live agent activity → open Orders
+   (fulfillment + agent reasoning) → Reconciliation (verify-then-pay
+   recovery in action).
 
 Stack/completion notes for whoever resumes:
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
