@@ -6,7 +6,7 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-08-31 — per-order fulfillment + intent observability surfaced in-product; verify-then-pay sweep made money-aware (release unpaid, refund only captured).
+**Last updated:** 2026-09-02 — per-order fulfillment + intent observability surfaced in-product; verify-then-pay sweep made money-aware (release unpaid, refund only captured); captured-payment path wired so the sweep's refund arm runs live (Option A — in-ledger refunds).
 
 ## Current phase
 
@@ -352,6 +352,42 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       `58ee651` dashboard orders page, `638a43e` dashboard released-resolved,
       `6743592` tests, plus `96444ce` Dockerfile fix.
 
+ 8. **Captured-payment path exercise the refund arm live (Option A)** (this
+    session): the sweep's refund arm previously only ran in tests — unpaid
+    orders were correctly released. Decision with the user (Option A): record
+    the captured payment in **our** `payments` ledger as the authoritative
+    money record, and let the verify-then-pay refund arm run against it.
+    - **Constraint found + flagged**: Razorpay has **no valid server-side REST
+      call** to create a captured payment for an order. The client's dormant
+      `capture_payment` (POST `/v1/payments` with `{amount,currency,method,
+      order_id}`) is not a documented API — verified empirically against the
+      sandbox it returns `BAD_REQUEST_ERROR: Authentication failed`. Real
+      test-mode payments require the interactive Checkout SDK. So the payment
+      is **self-captured**: `execute_purchase` records a deterministic
+      `pay_self_<order_id>` payment row (`captured: true`, status `captured`,
+      method `self`) + a `payment_captured` audit write, and passes that id
+      into the reconciliation `Outcome` + `PurchaseResponse`.
+    - `RazorpayRefundProvider::issue_refund` now resolves `pay_self_*` ids
+      to a recorded `refund_self_<pid>` refund (`status: processed`) in our
+      ledger instead of hitting the sandbox with a fake id; real `pay_...`
+      ids still round-trip to Razorpay unchanged. New pure
+      `is_self_captured` + unit tests.
+    - `order_repo::list_recent` / `OrderViewRow` + gateway `GET /orders` now
+      surface the captured `payment_id`; dashboard Orders page shows a
+      "captured" badge.
+    - Removed the broken, unused `razorpay_client::capture_payment`.
+    - Live verified end-to-end: a backdated unfulfilled order with a
+      self-captured payment was swept → mismatch `refund_completed` with a
+      real `refund_self_...` id linked (FK-valid against `refunds`) + audited
+      `refund_triggered`; `/orders` returns the `pay_self_...` payment_id.
+      10 integration tests + 7 reconciliation unit tests pass; gateway clippy
+      `-D warnings` clean; dashboard `npm run build` clean.
+    - Commits: `razorpay-client: remove invalid capture_payment endpoint`,
+      `reconciliation: refund self-captured test payments in-ledger`,
+      `catalog: record self-captured payment on purchase`,
+      `catalog: surface captured payment in order view`,
+      `dashboard: show captured payment on orders`.
+
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
  0 remaining tracer-bullet vertical slices. **Backlog complete — all 14
@@ -387,21 +423,17 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-None — the current slice (per-order fulfillment + intent observability, and
-the money-aware verify-then-pay sweep) is shipped, committed, pushed, and
-live-verified.
+None — the current slice (per-order fulfillment + intent observability, the
+money-aware verify-then-pay sweep, and the captured-payment path that
+exercises its refund arm) is shipped, committed, pushed, and live-verified.
 
 Outstanding product-depth opportunities (not yet done — candidate next
 steps if the user wants more):
-- Add a real captured-payment path so test-mode sweep refunds actually
-  succeed. Today orders stay `created` with no payment row, so the sweep
-  releases them (nothing to refund) rather than exercising the refund arm.
-  Wiring a Razorpay capture (or a test-mode captured payment) would let the
-  sweep's refund path be exercised live.
 - Record a short demo video / one-page judge walkthrough: sign in as the
   demo merchant → watch Overview KPIs + live agent activity → open Orders to
-  see fulfillment + the agent's reasoning → Reconciliation to see a
-  verify-then-pay recovery in action.
+  see fulfillment + the agent's reasoning + the captured-money badge →
+  Reconciliation to see a verify-then-pay recovery (refund_completed) in
+  action.
 - DONE: Added `scripts/seed_demo.py` (idempotent) that creates a demo merchant
   mapped to `merchant-001` (the live catalog owner) + a demo admin + a scoped
   agent key + one immediate purchase + a reconciliation mismatch. Run AFTER
@@ -438,14 +470,12 @@ Nothing is off-limits.
 
 ## Next task
 
-Decide the next depth slice with the user. Candidates, in priority order:
-1. Wire a real captured-payment path so the sweep's refund arm is exercised
-   live (today unpaid orders are released, which is correct but means the
-   refund path only runs in tests).
-2. Record a short demo video / one-page judge walkthrough: sign in as the
-   demo merchant → watch Overview KPIs + live agent activity → open Orders
-   (fulfillment + agent reasoning) → Reconciliation (verify-then-pay
-   recovery in action).
+Record a short demo video / one-page judge walkthrough: sign in as the
+demo merchant → watch Overview KPIs + live agent activity → open Orders
+(fulfillment + agent reasoning + captured-money badge) → Reconciliation
+(verify-then-pay recovery showing `refund_completed`, and the released
+never-charged orders). Ready for the demo whenever the user wants it; no
+open engineering work remains on the current slice.
 
 Stack/completion notes for whoever resumes:
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
