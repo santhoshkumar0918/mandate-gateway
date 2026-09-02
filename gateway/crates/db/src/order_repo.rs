@@ -71,6 +71,9 @@ pub struct OrderViewRow {
     pub category: Option<String>,
     pub reasoning: Option<String>,
     pub selection_method: Option<String>,
+    /// The captured payment id for this order, if any. NULL when the order
+    /// was never charged (no money moved, therefore nothing refundable).
+    pub payment_id: Option<String>,
 }
 
 /// Lists recent orders with their fulfillment + intent detail.
@@ -87,10 +90,13 @@ pub async fn list_recent(
                   o.created_at,
                   f.fulfilled_at,
                   f.proof,
-                  i.product_id,
-                  i.category,
-                  i.reasoning,
-                  i.selection_method
+                   i.product_id,
+                   i.category,
+                   i.reasoning,
+                   i.selection_method,
+                   (SELECT p.payment_id FROM payments p
+                    WHERE p.order_id = o.order_id AND p.captured
+                    LIMIT 1) AS payment_id
            FROM orders o
            LEFT JOIN fulfillments f ON o.order_id = f.order_id
            LEFT JOIN intents i ON o.order_id = i.order_id
