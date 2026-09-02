@@ -18,6 +18,17 @@ function FulfillmentBadge({ o }: { o: Order }) {
   );
 }
 
+function PaymentBadge({ paymentId }: { paymentId: string | null }) {
+  return paymentId ? (
+    <span
+      title={paymentId}
+      className="rounded-full bg-accent/15 px-2 py-0.5 text-xs text-accent"
+    >
+      captured
+    </span>
+  ) : null;
+}
+
 export default function OrdersPage() {
   const [items, setItems] = useState<Order[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -95,6 +106,7 @@ export default function OrdersPage() {
                   <span className="text-sm font-medium">
                     ₹{(o.amount / 100).toLocaleString("en-IN")}
                   </span>
+                  <PaymentBadge paymentId={o.payment_id} />
                   <FulfillmentBadge o={o} />
                 </div>
               </div>

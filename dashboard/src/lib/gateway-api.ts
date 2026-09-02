@@ -274,6 +274,7 @@ export interface Order {
   category: string | null;
   reasoning: string | null;
   selection_method: string | null;
+  payment_id: string | null;
 }
 
 export async function getOrders(token: string): Promise<Order[]> {
