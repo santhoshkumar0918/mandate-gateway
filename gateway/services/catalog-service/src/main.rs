@@ -557,7 +557,36 @@ async fn execute_purchase(
         order_amount, &mandate.currency, &order.status, Some(&receipt)).await
         .map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
 
-    // 9. Audit: order created
+    // 9. Record the captured payment in our ledger. This test-mode flow has
+    //    no interactive checkout, so the payment is self-captured at order
+    //    creation: a deterministic payment id (unique per order) is recorded
+    //    as captured so the reconcile sweep can exercise the real refund arm.
+    //    The `payments` table is the authoritative money ledger reconciliation
+    //    reads; ordered captures flow through it and a fulfilment-time drift
+    //    is refunded against this recorded payment, never a fabricated one.
+    let payment_id = format!("pay_self_{}", order.id);
+    db::payment_repo::insert(&state.db, &db::payment_repo::InsertPaymentParams {
+        payment_id: &payment_id,
+        order_id: &order.id,
+        mandate_id: mandate.mandate_id,
+        amount: order_amount,
+        currency: &mandate.currency,
+        status: "captured",
+        method: Some("self"),
+        captured: true,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
+        event_type: "payment_captured",
+        mandate_id: Some(mandate.mandate_id),
+        entity_id: &payment_id,
+        decision: "allow",
+        reason: Some("self-captured in test mode (no checkout)"),
+        detail: Some(serde_json::json!({ "amount": order_amount, "order_id": order.id })),
+        actor: &mandate.buyer_agent_id,
+    }).await.map_err(|e| (StatusCode::INTERNAL_SERVER_ERROR, Json(ErrorResponse { error: e.to_string() })))?;
+
+    // 10. Audit: order created
     db::audit_repo::append(&state.db, &db::audit_repo::AuditParams {
         event_type: "order_created",
         mandate_id: Some(mandate.mandate_id),
@@ -573,7 +602,7 @@ async fn execute_purchase(
     //     triggers recovery if the prices diverge.
     let outcome = reconciliation::Outcome {
         order_id: order.id.clone(),
-        payment_id: String::new(), // no captured payment in this flow
+        payment_id: payment_id.clone(),
         product_id: body.product_id.clone(),
         actual_price: order_amount,
         currency: mandate.currency.clone(),
@@ -596,7 +625,7 @@ async fn execute_purchase(
         StatusCode::CREATED,
         Json(PurchaseResponse {
             order_id: order.id,
-            payment_id: None,
+            payment_id: Some(payment_id),
             status: order.status,
             amount: order_amount,
         }),
@@ -726,6 +755,8 @@ struct OrderView {
     category: Option<String>,
     reasoning: Option<String>,
     selection_method: Option<String>,
+    /// Captured payment for this order, if any (money moved → refundable).
+    payment_id: Option<String>,
 }
 
 /// Merchant/admin view of orders with fulfillment status + the buyer intent
@@ -752,6 +783,7 @@ async fn list_orders(
             category: r.category,
             reasoning: r.reasoning,
             selection_method: r.selection_method,
+            payment_id: r.payment_id,
         })
         .collect();
 
