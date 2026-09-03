@@ -185,6 +185,7 @@ mandate-crypto-agent ──> policy-engine-agent ──> razorpay-gateway-agent
 | `reconciliation-agent` | Intent-vs-outcome mismatch detection, row locking, refund trigger | `razorpay-gateway-agent` | `postgres-audit-log-design`, `fintech-security-review` |
 | `audit-dashboard-agent` | Audit log schema + query API + Next.js dashboard + consent UI | `reconciliation-agent` | `postgres-audit-log-design`, `ui-ux-pro-max` |
 | `product-ux-agent` | Product web app: auth flows, onboarding, merchant/agent/admin dashboards, live audit UI, design system | `audit-dashboard-agent` | `ui-ux-pro-max`, `frontend-design` |
+| `frontend-designer-agent` | Visual/UX craft across the Next.js dashboard: premium polish, motion, typography, layout refinement, loading/empty/error states, design-system compliance | `product-ux-agent`, `audit-dashboard-agent` (any polish pass) | `ui-ux-pro-max` |
 | `deployment-agent` | Whole-stack orchestration via docker-compose, CI/CD, key persistence, Redis/worker wiring, `docker compose up` = full product | `product-ux-agent` | `fintech-security-review` |
 | `qa-integration-agent` | End-to-end tests, concurrency tests, engineered-failure test harness | everything above | `fintech-security-review` |
 
@@ -223,7 +224,7 @@ should stay accurate even if the specific mandate schema changes.
 | `research-lookup-protocol` | How to look up official docs/APIs/crate references and report findings without guessing | `research-agent` |
 | `code-review-checklist` | What to check in a diff before approving it — scope, tests, style, rule compliance | `code-review-agent` |
 | `git-commit-conventions` | Atomic commit sizing, message format, when to commit vs. when to keep working | `git-commit-agent` |
-| `ui-ux-pro-max` | UI/UX design intelligence: design systems, product palettes, typography, accessibility, responsive layout, charts, stack-specific implementation | `product-ux-agent`, `audit-dashboard-agent` (any frontend work) |
+| `ui-ux-pro-max` | UI/UX design intelligence: design systems, product palettes, typography, accessibility, responsive layout, charts, stack-specific implementation | `product-ux-agent`, `audit-dashboard-agent`, `frontend-designer-agent` (any frontend work) |
 | `to-tickets` | Break a plan/spec into tracer-bullet vertical slices with blocking edges, published to the tracker | any builder agent, **only when the user says "tickets" / `/to-tickets`** — not automatic |
 
 ## 6. Coding standards
@@ -276,6 +277,7 @@ Example prompts and which subagent should pick them up:
 - "Write the rule that blocks a purchase over the mandate's max_amount" → `policy-engine-agent`
 - "Wire up the Razorpay refund call for the reconciliation flow" → `razorpay-gateway-agent` (API call) + `reconciliation-agent` (trigger logic)
 - "Build the consent screen" → `audit-dashboard-agent`
+- "Make the dashboard look premium / polish the UI / elevate the frontend" → `frontend-designer-agent` (load `ui-ux-pro-max`, keep the backend contract frozen)
 - "Simulate the catalog price drift failure scenario" → `reconciliation-agent`, then `qa-integration-agent` for the test
 - "Set up the product feed endpoint" → `catalog-manifest-agent`
 - "Build the merchant dashboard / onboarding / design system" → `product-ux-agent` (load `ui-ux-pro-max` for every frontend slice)
