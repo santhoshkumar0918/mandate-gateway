@@ -6,7 +6,7 @@
 > work, so the next session (or a fresh/stuck agent) doesn't have to
 > re-derive state from scratch.
 
-**Last updated:** 2026-09-02 — per-order fulfillment + intent observability surfaced in-product; verify-then-pay sweep made money-aware (release unpaid, refund only captured); captured-payment path wired so the sweep's refund arm runs live (Option A — in-ledger refunds).
+**Last updated:** 2026-09-03 — dashboard frontend elevated to a premium visual bar (design-foundation tokens + motion, shared UI atoms, glass app shell, and all screens rewritten to consume them) via the new `frontend-designer-agent`, with the backend contract fully frozen.
 
 ## Current phase
 
@@ -388,6 +388,44 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
       `catalog: surface captured payment in order view`,
       `dashboard: show captured payment on orders`.
 
+ 9. **Premium frontend elevation (dashboard), backend contract frozen** (this
+    session): the trust product's UI was prototype-grade; this pass lifted the
+    whole dashboard to an intentional, "billion-dollar" visual bar with zero
+    changes under `gateway/`, `audit/`, or to `gateway-api.ts` shapes.
+    - **Design foundation** (`dashboard/src/app/globals.css`): new richness
+      tokens (`--color-elevated`, `--color-hover`, `--shadow-card`,
+      `--shadow-card-hover`, `--shadow-pop`), body background gradients,
+      `.card`/`.card-hover`/`.text-gradient` classes, motion utilities
+      (`mg-fade-in`, `mg-stagger` + delays, `skeleton` shimmer, `live-dot`
+      ring) with `prefers-reduced-motion` compliance.
+    - **Shared atoms** (`dashboard/src/components/ui.tsx`): `PageHeader`,
+      `Card`, `StatCard` (gradient accent + stagger), `Skeleton`, `Badge`
+      (neutral/accent/danger/warning/muted) — pure presentational, no backend.
+    - **AppShell** (`dashboard/src/components/AppShell.tsx`): branded bolt
+      mark, active pill + left indicator bar, grouped nav, glass sidebar +
+      sticky top bar, signed-in role chip, hover micro-interactions.
+    - **All screens rewritten** to consume the atoms with loading/empty/error
+      states and stagger: overview (KPI grid, live activity feed, quick
+      actions, empty-store hook), catalog (price-edit cards), agents console
+      (key manager + stat cards + live activity), orders (captured badge +
+      reasoning quote), mandates, audit (live feed, filters, LIVE pulse),
+      reconciliation (alert banner + status-badge cards), admin (12 KPI cards +
+      trust status), and the login/signup auth screens (glass cards).
+    - **New subagent**: `.opencode/agents/frontend-designer-agent.md` (gitignored
+      like all agent files) + AGENTS.md roster/skills/routing entries for
+      dashboard UX polish (`docs: roster frontend-designer-agent`).
+    - `npm run build` clean; `git diff` confirms **no** `gateway/` or `audit/`
+      changes and **no** `gateway-api.ts` edits. Pure presentational — no
+      behavior/data logic changed, so no backend tests were touched.
+    - Commits: `dashboard: elevate design foundation…`,
+      `dashboard: add shared premium UI atoms…`,
+      `dashboard: elevate app shell navigation…`,
+      `dashboard: elevate overview, catalog, and agent console screens`,
+      `dashboard: elevate orders, mandates, audit, and reconciliation screens`,
+      `dashboard: elevate admin console…`,
+      `dashboard: elevate login and signup auth screens`,
+      `docs: roster frontend-designer-agent…`.
+
 ## Product tickets (backlog — see `docs/product-backlog/issues/`)
 
  0 remaining tracer-bullet vertical slices. **Backlog complete — all 14
@@ -423,9 +461,9 @@ web app with live audit stream, CI/CD + `docker compose up` = whole stack.
 
 ## In progress right now
 
-None — the current slice (per-order fulfillment + intent observability, the
-money-aware verify-then-pay sweep, and the captured-payment path that
-exercises its refund arm) is shipped, committed, pushed, and live-verified.
+None — the frontend elevation slice is shipped, committed (9 atomic commits
+including the earlier proxy fix), and the build is clean. The dashboard now
+runs at the premium visual bar behind `docker compose up`.
 
 Outstanding product-depth opportunities (not yet done — candidate next
 steps if the user wants more):
@@ -470,14 +508,21 @@ Nothing is off-limits.
 
 ## Next task
 
-Record a short demo video / one-page judge walkthrough: sign in as the
-demo merchant → watch Overview KPIs + live agent activity → open Orders
-(fulfillment + agent reasoning + captured-money badge) → Reconciliation
-(verify-then-pay recovery showing `refund_completed`, and the released
-never-charged orders). Ready for the demo whenever the user wants it; no
-open engineering work remains on the current slice.
+Visual QA of the elevated dashboard in the running stack (`docker compose
+up`, then sign in as `demo@merchant.local` / `Demo@1234`): eyeball the
+Overview KPIs + live feed, Catalog price-edit, Agent Console, Orders,
+Audit (LIVE pulse + filters), Reconciliation, Admin, and login/signup for
+layout, spacing, motion, and reduced-motion compliance. Then record the
+short demo video / one-page judge walkthrough (Overview → Orders →
+Reconciliation). No open engineering work remains on the frontend
+elevation slice — the backend contract is frozen and untouched.
 
 Stack/completion notes for whoever resumes:
+- Frontend elevation (this session): design tokens + motion live in
+  `globals.css`; shared atoms in `dashboard/src/components/ui.tsx`
+  (`PageHeader`, `Card`, `StatCard`, `Skeleton`, `Badge`); screens under
+  `dashboard/src/app/(app)/` consume them. Reuse these atoms for any new
+  dashboard UI — the backend contract in `gateway-api.ts` must stay frozen.
 - Test guidance: `cargo clippy -- -D warnings` in `gateway/` (workspace),
   `npx tsc --noEmit` + `npx eslint src` in `dashboard/` (the
   `react-hooks/set-state-in-effect` rule is downgraded to a warning because the
