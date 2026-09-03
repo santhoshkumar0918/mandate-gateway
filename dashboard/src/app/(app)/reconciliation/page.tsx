@@ -4,18 +4,21 @@ import { useCallback, useEffect, useState } from "react";
 import { getMismatches, type Mismatch } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
 import { Pagination } from "@/components/Pagination";
+import { Badge, Card, PageHeader, Skeleton } from "@/components/ui";
+import { Icon } from "@/components/Icon";
+
+const STATUS_TONE: Record<string, "danger" | "warning" | "accent" | "muted"> = {
+  detected: "danger",
+  refund_initiated: "warning",
+  refund_completed: "accent",
+  released: "muted",
+};
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    detected: "bg-destructive/15 text-destructive",
-    refund_initiated: "bg-amber-400/15 text-amber-300",
-    refund_completed: "bg-accent/15 text-accent",
-    released: "bg-muted/40 text-muted-foreground",
-  };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${map[status] ?? "bg-muted text-foreground"}`}>
+    <Badge tone={STATUS_TONE[status] ?? "neutral"}>
       {status.replace("_", " ")}
-    </span>
+    </Badge>
   );
 }
 
@@ -50,20 +53,19 @@ export default function ReconciliationPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Reconciliation</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Intent-vs-outcome mismatches the engine detected and is recovering.
-        </p>
-      </div>
+      <PageHeader
+        title="Reconciliation"
+        description="Intent-vs-outcome mismatches the engine detected and is recovering."
+        icon={<Icon name="alert" className="h-5 w-5" />}
+      />
 
       {open.length > 0 && (
         <div
           role="alert"
-          className="mb-6 rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive"
+          className="mg-fade-in mb-6 flex items-center gap-3 rounded-xl border border-destructive/50 bg-destructive/10 px-4 py-3 text-sm text-destructive"
         >
-          {open.length} unreconciled mismatch{open.length > 1 ? "es" : ""} detected — refunds
-          in progress.
+          <span className="live-dot h-2.5 w-2.5 shrink-0 rounded-full bg-destructive" />
+          {open.length} unreconciled mismatch{open.length > 1 ? "es" : ""} detected — refunds in progress.
         </div>
       )}
 
@@ -74,37 +76,67 @@ export default function ReconciliationPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card p-5">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-4 w-40" />
+                <Skeleton className="h-6 w-20 rounded-full" />
+              </div>
+              <Skeleton className="mt-3 h-3 w-64" />
+            </div>
+          ))}
+        </div>
       ) : items.length === 0 ? (
-        <p className="text-sm text-muted-foreground">
-          No mismatches. Every intent matched its outcome.
-        </p>
+        <Card className="p-10 text-center">
+          <Icon name="check" className="mx-auto h-8 w-8 text-accent/70" />
+          <p className="mt-3 text-sm text-muted-foreground">
+            No mismatches. Every intent matched its outcome.
+          </p>
+        </Card>
       ) : (
         <ul className="flex flex-col gap-3">
-          {items.slice((page - 1) * PAGE, page * PAGE).map((m) => (
+          {items.slice((page - 1) * PAGE, page * PAGE).map((m, i) => (
             <li
               key={m.mismatch_id}
-              className={`mg-fade-in rounded-xl border bg-card p-4 ${
-                m.status === "detected" ? "border-destructive/50" : "border-border"
+              className={`card mg-stagger p-5 mg-stagger-${(i % 4) + 1} ${
+                m.status === "detected" ? "border-destructive/50" : "card-hover"
               }`}
             >
-              <div className="flex items-center justify-between">
-                <p className="font-medium text-foreground">
-                  {String((m.kind && (m.kind as Record<string, unknown>).kind) ?? "mismatch")}
-                </p>
+              <div className="flex items-center justify-between gap-3">
+                <div className="flex items-center gap-3">
+                  <span
+                    className={`grid h-9 w-9 shrink-0 place-items-center rounded-lg ${
+                      m.status === "detected"
+                        ? "bg-destructive/15 text-destructive"
+                        : m.status === "refund_completed"
+                          ? "bg-accent/15 text-accent"
+                          : "bg-muted text-muted-foreground"
+                    }`}
+                  >
+                    <Icon name="alert" className="h-4 w-4" />
+                  </span>
+                  <p className="font-medium text-foreground">
+                    {String((m.kind && (m.kind as Record<string, unknown>).kind) ?? "mismatch")}
+                  </p>
+                </div>
                 <StatusBadge status={m.status} />
               </div>
-              <p className="mt-1 text-xs text-muted-foreground">
+              <p className="mt-3 text-xs text-muted-foreground">
                 mandate {m.mandate_id} · detected {new Date(m.detected_at).toLocaleString("en-IN")}
               </p>
               {m.refund_id && (
-                <p className="mt-1 text-xs text-muted-foreground">refund {m.refund_id}</p>
+                <p className="mt-1.5 inline-flex items-center gap-1.5 rounded-md bg-accent/10 px-2 py-1 font-mono text-[11px] text-accent">
+                  <Icon name="refresh" className="h-3 w-3" /> refund {m.refund_id}
+                </p>
               )}
             </li>
           ))}
         </ul>
       )}
-      <Pagination page={page} pageSize={PAGE} total={items.length} onPage={setPage} />
+      {items.length > PAGE && (
+        <Pagination page={page} pageSize={PAGE} total={items.length} onPage={setPage} />
+      )}
     </div>
   );
 }

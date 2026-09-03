@@ -5,6 +5,8 @@ import { useSearchParams } from "next/navigation";
 import { getAuditFeed, type AuditFeedEntry } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
 import { Pagination } from "@/components/Pagination";
+import { Badge, PageHeader, Skeleton } from "@/components/ui";
+import { Icon } from "@/components/Icon";
 
 const EVENT_TYPES = [
   "mandate_issued",
@@ -17,12 +19,8 @@ const EVENT_TYPES = [
 function DecisionBadge({ decision }: { decision: string }) {
   const allowed = decision === "allowed";
   const blocked = decision === "blocked";
-  const cls = allowed
-    ? "bg-accent/15 text-accent"
-    : blocked
-      ? "bg-destructive/15 text-destructive"
-      : "bg-muted-foreground/15 text-muted-foreground";
-  return <span className={`rounded-full px-2 py-0.5 text-xs ${cls}`}>{decision}</span>;
+  const tone = allowed ? "accent" : blocked ? "danger" : "muted";
+  return <Badge tone={tone}>{decision}</Badge>;
 }
 
 function keyOf(e: AuditFeedEntry) {
@@ -35,6 +33,7 @@ function Feed({ scopeId }: { scopeId: string | null }) {
   const [eventType, setEventType] = useState("all");
   const [live, setLive] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [loading, setLoading] = useState(true);
   const seen = useRef<Set<string>>(new Set());
   const [newKeys, setNewKeys] = useState<Set<string>>(new Set());
   const [page, setPage] = useState(1);
@@ -61,6 +60,8 @@ function Feed({ scopeId }: { scopeId: string | null }) {
       setError(null);
     } catch (e) {
       setError(e instanceof Error ? e.message : "Feed error");
+    } finally {
+      setLoading(false);
     }
   }, [scopeId, decision, eventType]);
 
@@ -71,20 +72,20 @@ function Feed({ scopeId }: { scopeId: string | null }) {
     return () => clearInterval(t);
   }, [load, live]);
 
+  const selectCls =
+    "rounded-lg border border-border bg-background px-3 py-1.5 text-sm text-foreground outline-none transition-colors focus-visible:border-accent";
+
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="mb-6 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <h1 className="text-2xl font-semibold">Live audit trail</h1>
-          <p className="mt-1 text-sm text-muted-foreground">
-            Every money-moving action, allowed or blocked, with why.
-          </p>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="flex items-center gap-2 text-xs text-muted-foreground">
-            <span
-              className={`h-2 w-2 rounded-full ${live ? "animate-pulse bg-accent" : "bg-muted-foreground"}`}
-            />
+      <div className="flex flex-wrap items-end justify-between gap-4">
+        <PageHeader
+          title="Live audit trail"
+          description="Every money-moving action, allowed or blocked, with why."
+          icon={<Icon name="list" className="h-5 w-5" />}
+        />
+        <div className="mb-8 flex items-center gap-2.5">
+          <span className="flex items-center gap-2 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
+            <span className={`live-dot h-2 w-2 rounded-full ${live ? "bg-accent" : "bg-muted-foreground"}`} />
             {live ? "LIVE" : "paused"}
           </span>
           <button
@@ -97,25 +98,17 @@ function Feed({ scopeId }: { scopeId: string | null }) {
       </div>
 
       <div className="mb-4 flex flex-wrap gap-3">
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           Decision
-          <select
-            value={decision}
-            onChange={(e) => setDecision(e.target.value)}
-            className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:border-accent"
-          >
+          <select value={decision} onChange={(e) => setDecision(e.target.value)} className={selectCls}>
             <option value="all">All</option>
             <option value="allowed">Allowed</option>
             <option value="blocked">Blocked</option>
           </select>
         </label>
-        <label className="flex flex-col gap-1 text-xs text-muted-foreground">
+        <label className="flex flex-col gap-1.5 text-xs text-muted-foreground">
           Event
-          <select
-            value={eventType}
-            onChange={(e) => setEventType(e.target.value)}
-            className="rounded-lg border border-border bg-background px-2 py-1.5 text-sm text-foreground outline-none focus-visible:border-accent"
-          >
+          <select value={eventType} onChange={(e) => setEventType(e.target.value)} className={selectCls}>
             <option value="all">All</option>
             {EVENT_TYPES.map((et) => (
               <option key={et} value={et}>
@@ -132,42 +125,54 @@ function Feed({ scopeId }: { scopeId: string | null }) {
         </p>
       )}
 
-      <div className="overflow-hidden rounded-xl border border-border">
-        <div className="grid grid-cols-[7rem_1fr_5rem] gap-2 border-b border-border bg-secondary/40 px-4 py-2 text-xs uppercase tracking-wide text-muted-foreground">
-          <span>Time</span>
-          <span>Event</span>
-          <span>Decision</span>
+      {loading ? (
+        <div className="flex flex-col gap-2.5 overflow-hidden rounded-xl border border-border p-4">
+          {Array.from({ length: 6 }).map((_, i) => (
+            <Skeleton key={i} className="h-10 rounded-lg" />
+          ))}
         </div>
-        <ul className="divide-y divide-border">
-          {entries.length === 0 && (
-            <li className="px-4 py-6 text-sm text-muted-foreground">No events yet.</li>
-          )}
-          {entries.slice((page - 1) * PAGE, page * PAGE).map((e) => {
-            const k = keyOf(e);
-            return (
-              <li
-                key={k}
-                className={`grid grid-cols-[7rem_1fr_5rem] gap-2 px-4 py-3 text-sm ${
-                  newKeys.has(k) ? "mg-fade-in bg-accent/5" : ""
-                }`}
-              >
-                <span className="text-muted-foreground">
-                  {new Date(e.created_at).toLocaleTimeString("en-IN")}
-                </span>
-                <div>
-                  <p className="font-medium text-foreground">{e.event_type}</p>
-                  <p className="text-xs text-muted-foreground">
-                    {e.actor}
-                    {e.reason ? ` · ${e.reason}` : ""}
-                  </p>
-                </div>
-                <DecisionBadge decision={e.decision} />
-              </li>
-            );
-          })}
-        </ul>
-      </div>
-      <Pagination page={page} pageSize={PAGE} total={entries.length} onPage={setPage} />
+      ) : (
+        <div className="card overflow-hidden">
+          <div className="grid grid-cols-[7rem_1fr_6rem] gap-3 border-b border-border bg-secondary/40 px-4 py-2.5 text-xs uppercase tracking-wide text-muted-foreground">
+            <span>Time</span>
+            <span>Event</span>
+            <span className="text-right">Decision</span>
+          </div>
+          <ul className="divide-y divide-border">
+            {entries.length === 0 && (
+              <li className="px-4 py-10 text-center text-sm text-muted-foreground">No events yet.</li>
+            )}
+            {entries.slice((page - 1) * PAGE, page * PAGE).map((e) => {
+              const k = keyOf(e);
+              return (
+                <li
+                  key={k}
+                  className={`grid grid-cols-[7rem_1fr_6rem] items-center gap-3 px-4 py-3 text-sm ${
+                    newKeys.has(k) ? "mg-fade-in bg-accent/5" : ""
+                  }`}
+                >
+                  <span className="text-xs tabular-nums text-muted-foreground">
+                    {new Date(e.created_at).toLocaleTimeString("en-IN")}
+                  </span>
+                  <div className="min-w-0">
+                    <p className="font-medium text-foreground">{e.event_type}</p>
+                    <p className="truncate text-xs text-muted-foreground">
+                      {e.actor}
+                      {e.reason ? ` · ${e.reason}` : ""}
+                    </p>
+                  </div>
+                  <div className="text-right">
+                    <DecisionBadge decision={e.decision} />
+                  </div>
+                </li>
+              );
+            })}
+          </ul>
+        </div>
+      )}
+      {entries.length > PAGE && (
+        <Pagination page={page} pageSize={PAGE} total={entries.length} onPage={setPage} />
+      )}
     </div>
   );
 }

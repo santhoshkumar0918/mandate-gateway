@@ -2,25 +2,22 @@
 
 import { useCallback, useEffect, useState } from "react";
 import Link from "next/link";
-import {
-  getMandates,
-  rejectMandate,
-  type MandateSummary,
-} from "@/lib/gateway-api";
+import { getMandates, rejectMandate, type MandateSummary } from "@/lib/gateway-api";
 import { getToken } from "@/lib/auth-client";
 import { Pagination } from "@/components/Pagination";
+import { Badge, Card, PageHeader, Skeleton } from "@/components/ui";
+import { Icon } from "@/components/Icon";
+
+const STATUS_TONE: Record<string, "accent" | "danger" | "muted"> = {
+  active: "accent",
+  revoked: "danger",
+  expired: "muted",
+  exhausted: "muted",
+};
 
 function StatusBadge({ status }: { status: string }) {
-  const map: Record<string, string> = {
-    active: "bg-accent/15 text-accent",
-    revoked: "bg-destructive/15 text-destructive",
-    expired: "bg-muted-foreground/15 text-muted-foreground",
-    exhausted: "bg-muted-foreground/15 text-muted-foreground",
-  };
   return (
-    <span className={`rounded-full px-2 py-0.5 text-xs ${map[status] ?? "bg-muted text-foreground"}`}>
-      {status}
-    </span>
+    <Badge tone={STATUS_TONE[status] ?? "neutral"}>{status}</Badge>
   );
 }
 
@@ -68,12 +65,11 @@ export default function MandatesPage() {
 
   return (
     <div className="mx-auto max-w-4xl">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold">Mandates</h1>
-        <p className="mt-1 text-sm text-muted-foreground">
-          Signed, scoped permissions granted to buyer agents.
-        </p>
-      </div>
+      <PageHeader
+        title="Mandates"
+        description="Signed, scoped permissions granted to buyer agents."
+        icon={<Icon name="shield" className="h-5 w-5" />}
+      />
 
       {error && (
         <p role="alert" className="mb-4 rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
@@ -82,24 +78,37 @@ export default function MandatesPage() {
       )}
 
       {loading ? (
-        <p className="text-sm text-muted-foreground">Loading…</p>
+        <div className="flex flex-col gap-3">
+          {Array.from({ length: 4 }).map((_, i) => (
+            <div key={i} className="card p-5">
+              <div className="flex items-center justify-between">
+                <Skeleton className="h-5 w-40" />
+                <Skeleton className="h-6 w-20 rounded-full" />
+              </div>
+              <Skeleton className="mt-3 h-4 w-64" />
+            </div>
+          ))}
+        </div>
       ) : mandates.length === 0 ? (
-        <p className="text-sm text-muted-foreground">No mandates issued yet.</p>
+        <Card className="p-10 text-center">
+          <Icon name="shield" className="mx-auto h-8 w-8 text-muted-foreground/50" />
+          <p className="mt-3 text-sm text-muted-foreground">No mandates issued yet.</p>
+        </Card>
       ) : (
         <ul className="flex flex-col gap-3">
-          {mandates.slice((page - 1) * PAGE, page * PAGE).map((m) => (
-            <li key={m.mandate_id} className="mg-fade-in rounded-xl border border-border bg-card p-4">
+          {mandates.slice((page - 1) * PAGE, page * PAGE).map((m, i) => (
+            <li key={m.mandate_id} className={`card card-hover mg-stagger p-5 mg-stagger-${(i % 4) + 1}`}>
               <div className="flex flex-wrap items-center justify-between gap-3">
                 <div>
                   <p className="font-medium text-foreground">
-                    {money(m.max_amount, m.currency)} · {m.frequency}
+                    {money(m.max_amount, m.currency)}
+                    <span className="mx-2 text-muted-foreground">·</span>
+                    <span className="capitalize text-muted-foreground">{m.frequency}</span>
                   </p>
-                  <p className="text-xs text-muted-foreground">
+                  <p className="mt-1 text-xs text-muted-foreground">
                     agent {m.buyer_agent_id} · scope {m.scope.join(", ")}
                   </p>
-                  <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">
-                    {m.mandate_id}
-                  </p>
+                  <p className="mt-1 font-mono text-[11px] text-muted-foreground/70">{m.mandate_id}</p>
                 </div>
                 <div className="flex items-center gap-2">
                   <StatusBadge status={m.status} />
@@ -113,19 +122,21 @@ export default function MandatesPage() {
                   )}
                 </div>
               </div>
-              <div className="mt-3 flex gap-3 text-xs">
-                <Link href={`/consent?mandate_id=${m.mandate_id}`} className="text-accent hover:underline">
-                  Review
+              <div className="mt-4 flex gap-4 text-xs">
+                <Link href={`/consent?mandate_id=${m.mandate_id}`} className="font-medium text-accent transition-colors hover:text-accent/80">
+                  Review →
                 </Link>
-                <Link href={`/audit?mandate_id=${m.mandate_id}`} className="text-accent hover:underline">
-                  Audit trail
+                <Link href={`/audit?mandate_id=${m.mandate_id}`} className="font-medium text-accent transition-colors hover:text-accent/80">
+                  Audit trail →
                 </Link>
               </div>
             </li>
           ))}
         </ul>
       )}
-      <Pagination page={page} pageSize={PAGE} total={mandates.length} onPage={setPage} />
+      {mandates.length > PAGE && (
+        <Pagination page={page} pageSize={PAGE} total={mandates.length} onPage={setPage} />
+      )}
     </div>
   );
 }
