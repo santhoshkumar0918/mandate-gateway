@@ -4,6 +4,7 @@ import { useState } from "react";
 import { useRouter } from "next/navigation";
 import { signup } from "@/lib/gateway-api";
 import { setToken, setRole as persistRole } from "@/lib/auth-client";
+import { Icon } from "@/components/Icon";
 
 export default function SignupPage() {
   const router = useRouter();
@@ -36,50 +37,43 @@ export default function SignupPage() {
     }
   }
 
+  const inputCls =
+    "rounded-lg border border-border bg-background px-3 py-2.5 text-foreground outline-none transition-colors focus-visible:border-accent";
+
   return (
-    <div className="grid min-h-screen place-items-center bg-background px-4">
-      <div className="w-full max-w-sm rounded-2xl border border-border bg-card p-7">
-        <div className="mb-6 flex items-center gap-2">
-          <span className="grid h-9 w-9 place-items-center rounded-lg bg-accent text-on-accent font-bold">
-            M
+    <div className="relative grid min-h-screen place-items-center overflow-hidden bg-background px-4 py-10">
+      <div
+        aria-hidden
+        className="pointer-events-none absolute -top-40 left-1/2 h-96 w-[42rem] -translate-x-1/2 rounded-full bg-accent/10 blur-3xl"
+      />
+      <div className="mg-fade-in w-full max-w-sm rounded-2xl border border-border bg-card/70 p-7 shadow-card backdrop-blur">
+        <div className="mb-6 flex items-center gap-2.5">
+          <span className="grid h-10 w-10 place-items-center rounded-xl bg-accent text-lg font-bold text-on-accent shadow-card">
+            <Icon name="bolt" className="h-5 w-5" />
           </span>
           <div>
-            <p className="font-semibold">Mandate Gateway</p>
+            <p className="text-lg font-semibold tracking-tight">Mandate Gateway</p>
             <p className="text-xs text-muted-foreground">Create your account</p>
           </div>
         </div>
+
         <form onSubmit={onSubmit} className="flex flex-col gap-4">
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="text-muted-foreground">Account type</span>
-            <select
-              value={role}
-              onChange={(e) => setRole(e.target.value as "merchant" | "agent")}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus-visible:border-accent"
-            >
+            <select value={role} onChange={(e) => setRole(e.target.value as "merchant" | "agent")} className={inputCls}>
               <option value="merchant">Merchant</option>
               <option value="agent">Buyer agent</option>
             </select>
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="text-muted-foreground">Name</span>
-            <input
-              required
-              value={name}
-              onChange={(e) => setName(e.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus-visible:border-accent"
-            />
+            <input required value={name} onChange={(e) => setName(e.target.value)} className={inputCls} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="text-muted-foreground">Email</span>
-            <input
-              type="email"
-              required
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus-visible:border-accent"
-            />
+            <input type="email" required value={email} onChange={(e) => setEmail(e.target.value)} className={inputCls} />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="text-muted-foreground">
               Tenant ID {role === "agent" ? "(agent id)" : "(merchant id)"}
             </span>
@@ -87,35 +81,33 @@ export default function SignupPage() {
               value={tenantId}
               onChange={(e) => setTenantId(e.target.value)}
               placeholder={role === "agent" ? "agent-001" : "merchant-001"}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus-visible:border-accent"
+              className={inputCls}
             />
           </label>
-          <label className="flex flex-col gap-1 text-sm">
+          <label className="flex flex-col gap-1.5 text-sm">
             <span className="text-muted-foreground">Password</span>
-            <input
-              type="password"
-              required
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              className="rounded-lg border border-border bg-background px-3 py-2 text-foreground outline-none focus-visible:border-accent"
-            />
+            <input type="password" required value={password} onChange={(e) => setPassword(e.target.value)} className={inputCls} />
           </label>
           {error && (
-            <p role="alert" className="rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive">
+            <p
+              role="alert"
+              className="mg-fade-in rounded-lg border border-destructive/40 bg-destructive/10 px-3 py-2 text-sm text-destructive"
+            >
               {error}
             </p>
           )}
           <button
             type="submit"
             disabled={loading}
-            className="rounded-lg bg-accent px-4 py-2.5 font-medium text-on-accent transition-opacity hover:opacity-90 disabled:opacity-60"
+            className="rounded-lg bg-accent px-4 py-2.5 font-medium text-on-accent transition-all hover:opacity-90 hover:shadow-card active:scale-[0.99] disabled:opacity-60"
           >
             {loading ? "Creating…" : "Create account"}
           </button>
         </form>
+
         <p className="mt-4 text-center text-sm text-muted-foreground">
           Already have an account?{" "}
-          <a href="/login" className="text-accent hover:underline">
+          <a href="/login" className="text-accent transition-colors hover:text-accent/80 hover:underline">
             Sign in
           </a>
         </p>
