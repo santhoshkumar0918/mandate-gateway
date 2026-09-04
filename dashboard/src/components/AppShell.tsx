@@ -137,12 +137,12 @@ export function AppShell({
               </p>
             </div>
           </div>
-          <Link
-            href="/login"
+          <button
+            onClick={logout}
             className="rounded-lg border border-border px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-accent hover:text-accent"
           >
-            Try demo
-          </Link>
+            Sign out
+          </button>
         </header>
         <main className="mx-auto w-full max-w-7xl flex-1 px-4 py-8 md:px-8">{children}</main>
       </div>

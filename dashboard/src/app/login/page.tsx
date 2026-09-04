@@ -1,17 +1,34 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
-import { login } from "@/lib/gateway-api";
-import { setToken, setRole } from "@/lib/auth-client";
+import { login, fetchMe } from "@/lib/gateway-api";
+import { setToken, setRole, getToken, clearToken } from "@/lib/auth-client";
 import { Icon } from "@/components/Icon";
 
 export default function LoginPage() {
   const router = useRouter();
+  const [checking, setChecking] = useState(true);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
+
+  useEffect(() => {
+    const existing = getToken();
+    if (!existing) {
+      setChecking(false);
+      return;
+    }
+    fetchMe(existing)
+      .then(() => {
+        router.replace("/dashboard");
+      })
+      .catch(() => {
+        clearToken();
+        setChecking(false);
+      });
+  }, [router]);
 
   async function onSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -27,6 +44,14 @@ export default function LoginPage() {
       setError(err instanceof Error ? err.message : "Login failed");
       setLoading(false);
     }
+  }
+
+  if (checking) {
+    return (
+      <div className="grid min-h-screen place-items-center bg-background">
+        <p className="text-sm text-muted-foreground">Loading…</p>
+      </div>
+    );
   }
 
   return (

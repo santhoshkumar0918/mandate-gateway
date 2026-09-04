@@ -24,7 +24,9 @@ export function proxy(req: NextRequest) {
     const url = req.nextUrl.clone();
     url.pathname = "/dashboard";
     url.search = "";
-    return NextResponse.redirect(url);
+    const res = NextResponse.redirect(url);
+    res.cookies.set(TOKEN_COOKIE, "", { path: "/", maxAge: 0 });
+    return res;
   }
 
   return NextResponse.next();
