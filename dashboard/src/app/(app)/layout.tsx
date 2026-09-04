@@ -8,7 +8,8 @@ export default async function AppLayout({
 }: {
   children: React.ReactNode;
 }) {
-  const token = (await cookies()).get(TOKEN_COOKIE)?.value;
+  const cookieStore = await cookies();
+  const token = cookieStore.get(TOKEN_COOKIE)?.value;
   if (!token) redirect("/login");
 
   let user = { role: "unknown", tenant_id: null as string | null };
